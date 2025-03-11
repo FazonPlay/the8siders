@@ -1,4 +1,0 @@
-Text: Law
-Confidence: 54.00%
-Method: tesseract_prep1_config2
-Source: test_images\capture_1741699707_1.jpg

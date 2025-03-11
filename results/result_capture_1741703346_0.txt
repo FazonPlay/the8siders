@@ -1,4 +1,0 @@
-Text: T5 GNoitc; ,1 c€ n DPAJNIL6A7
-Confidence: 9.27%
-Method: easyocr_original
-Source: test_images\capture_1741703346_0.jpg

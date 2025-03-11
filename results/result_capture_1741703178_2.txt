@@ -1,4 +1,0 @@
-Text: 6Chaoc (hdlba
-Confidence: 14.36%
-Method: easyocr_original
-Source: test_images\capture_1741703178_2.jpg

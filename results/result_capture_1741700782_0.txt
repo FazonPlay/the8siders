@@ -1,4 +1,0 @@
-Text: 1
-Confidence: 95.49%
-Method: easyocr_inverse
-Source: test_images\capture_1741700782_0.jpg

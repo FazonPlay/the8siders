@@ -1,4 +1,0 @@
-Text: 6 Chngc (Milba
-Confidence: 23.30%
-Method: easyocr_original
-Source: test_images\capture_1741703178_0.jpg

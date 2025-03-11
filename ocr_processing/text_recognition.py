@@ -1,32 +1,33 @@
 import cv2
 import numpy as np
-import pytesseract
 import os
 import time
 from PIL import Image
 import re
 import difflib
-pytesseract.pytesseract.tesseract_cmd = r'C:\Installed Apps\tesseract.exe'  # Update this path to match your installation
-# Try to import optional OCR engines
+
+# Try to import EasyOCR
 try:
     import easyocr
 
     EASYOCR_AVAILABLE = True
 except ImportError:
     EASYOCR_AVAILABLE = False
+    raise ImportError("EasyOCR is required for this script. Install with: pip install easyocr")
+
 
 class OCRProcessor:
-
-
     def __init__(self):
         self.last_result = None
         self.confidence = 0
         self.debug_dir = "debug_images"
         os.makedirs(self.debug_dir, exist_ok=True)
 
-        # Initialize optional OCR engines
+        # Initialize EasyOCR
         if EASYOCR_AVAILABLE:
             self.easyocr_reader = easyocr.Reader(['en'])
+        else:
+            raise RuntimeError("EasyOCR is not available. Please install it with: pip install easyocr")
 
     def preprocess_image_standard(self, image):
         """Standard preprocessing pipeline for OCR"""
@@ -105,146 +106,6 @@ class OCRProcessor:
 
         return adaptive
 
-    def recognize_with_tesseract(self, image, configs=None):
-        """Recognize text using Tesseract with various configurations"""
-        if configs is None:
-            configs = [
-                '--oem 3 --psm 6 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789',
-                '--oem 3 --psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789',
-                '--oem 3 --psm 8 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789',
-                '--oem 3 --psm 13',  # Raw line
-                '--oem 1 --psm 10'  # Treat as single character, legacy engine
-            ]
-
-        results = []
-
-        # Try different preprocessing methods
-        preprocessed_images = [
-            self.preprocess_image_standard(image),
-            self.preprocess_image_enhanced(image),
-            self.preprocess_image_inverse(image),
-            self.preprocess_image_adaptive(image),
-            self.preprocess_for_printed_text(image)  # Add this line
-
-        ]
-
-        for idx, proc_img in enumerate(preprocessed_images):
-            for config_idx, config in enumerate(configs):
-                try:
-                    data = pytesseract.image_to_data(proc_img, config=config,
-                                                     output_type=pytesseract.Output.DICT)
-
-                    # Extract text and confidence
-                    texts = []
-                    confidences = []
-
-                    for i in range(len(data['text'])):
-                        if int(data['conf'][i]) > 0 and data['text'][i].strip():
-                            texts.append(data['text'][i])
-                            confidences.append(int(data['conf'][i]))
-
-                    # Combine text and calculate average confidence
-                    result_text = ' '.join([t for t in texts if t.strip()])
-                    avg_confidence = sum(confidences) / len(confidences) if confidences else 0
-
-                    if result_text.strip():
-                        results.append({
-                            'text': result_text,
-                            'confidence': avg_confidence,
-                            'method': f'tesseract_prep{idx}_config{config_idx}'
-                        })
-
-                        # Debug: log the result
-                        print(
-                            f"Tesseract (Prep {idx}, Config {config_idx}): '{result_text}' (Conf: {avg_confidence:.2f}%)")
-
-                except Exception as e:
-                    print(f"Error with Tesseract config {config}: {e}")
-
-        if not results:
-            return None, 0, "tesseract_failed"
-
-        # Return the result with highest confidence
-        best_result = max(results, key=lambda x: x['confidence'])
-        return best_result['text'], best_result['confidence'], best_result['method']
-
-    def recognize_with_easyocr(self, image):
-        """Recognize text using EasyOCR"""
-        if not EASYOCR_AVAILABLE:
-            return None, 0, "easyocr_not_available"
-
-        try:
-            # Preprocess image
-            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
-            # Run EasyOCR
-            results = self.easyocr_reader.readtext(gray)
-
-            if not results:
-                return None, 0, "easyocr_no_text"
-
-            texts = []
-            confidences = []
-
-            for (bbox, text, prob) in results:
-                if text.strip():
-                    texts.append(text)
-                    confidences.append(prob * 100)  # Convert to percentage
-
-            full_text = ' '.join(texts)
-            avg_confidence = sum(confidences) / len(confidences) if confidences else 0
-
-            # Debug: log the result
-            print(f"EasyOCR: '{full_text}' (Conf: {avg_confidence:.2f}%)")
-
-            return full_text, avg_confidence, "easyocr"
-
-        except Exception as e:
-            print(f"Error with EasyOCR: {e}")
-            return None, 0, "easyocr_error"
-
-
-    def get_best_result(self, results):
-        """Determine the best result from multiple OCR engines"""
-        # Filter out None results
-        valid_results = [r for r in results if r[0] is not None]
-
-        if not valid_results:
-            return "No text detected", 0, "no_valid_results"
-
-        # If only one valid result, return it
-        if len(valid_results) == 1:
-            return valid_results[0]
-
-        # Strategy 1: Select result with highest confidence
-        best_by_confidence = max(valid_results, key=lambda x: x[1])
-
-        # Strategy 2: Check if multiple engines detected the same or similar text
-        texts = [r[0] for r in valid_results]
-        text_matches = {}
-
-        for i, text1 in enumerate(texts):
-            for j, text2 in enumerate(texts):
-                if i < j:
-                    similarity = difflib.SequenceMatcher(None, text1, text2).ratio()
-                    if similarity > 0.7:  # Texts are similar
-                        # Choose the one with higher confidence
-                        if valid_results[i][1] > valid_results[j][1]:
-                            text_matches[text1] = text_matches.get(text1, 0) + 1
-                        else:
-                            text_matches[text2] = text_matches.get(text2, 0) + 1
-
-        # If we found similar texts across engines
-        if text_matches:
-            most_common_text = max(text_matches.items(), key=lambda x: x[1])[0]
-            # Find the result with this text
-            for result in valid_results:
-                if result[0] == most_common_text:
-                    return result
-
-        # Default to highest confidence
-        return best_by_confidence
-
     def preprocess_for_printed_text(self, image):
         """Specialized preprocessing for clear printed text"""
         img = cv2.resize(image, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
@@ -265,21 +126,104 @@ class OCRProcessor:
 
         return binary
 
+    def recognize_with_easyocr(self, image, preprocessing_method=None):
+        """Recognize text using EasyOCR with optional preprocessing"""
+        try:
+            # Apply preprocessing if specified
+            if preprocessing_method == "standard":
+                processed_image = self.preprocess_image_standard(image)
+            elif preprocessing_method == "enhanced":
+                processed_image = self.preprocess_image_enhanced(image)
+            elif preprocessing_method == "inverse":
+                processed_image = self.preprocess_image_inverse(image)
+            elif preprocessing_method == "adaptive":
+                processed_image = self.preprocess_image_adaptive(image)
+            elif preprocessing_method == "printed":
+                processed_image = self.preprocess_for_printed_text(image)
+            else:
+                # If no preprocessing method specified, use grayscale conversion
+                processed_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+            # Run EasyOCR
+            results = self.easyocr_reader.readtext(processed_image)
+
+            if not results:
+                return None, 0, f"easyocr_{preprocessing_method}_no_text"
+
+            texts = []
+            confidences = []
+
+            for (bbox, text, prob) in results:
+                if text.strip():
+                    texts.append(text)
+                    confidences.append(prob * 100)  # Convert to percentage
+
+            full_text = ' '.join(texts)
+            avg_confidence = sum(confidences) / len(confidences) if confidences else 0
+
+            # Debug: log the result
+            print(f"EasyOCR ({preprocessing_method}): '{full_text}' (Conf: {avg_confidence:.2f}%)")
+
+            return full_text, avg_confidence, f"easyocr_{preprocessing_method}"
+
+        except Exception as e:
+            print(f"Error with EasyOCR ({preprocessing_method}): {e}")
+            return None, 0, f"easyocr_{preprocessing_method}_error"
+
     def recognize_text(self, image):
-        """Recognize text using multiple OCR engines and strategies"""
+        """Recognize text using EasyOCR with multiple preprocessing strategies"""
         results = []
 
-        # Use Tesseract
-        tesseract_result = self.recognize_with_tesseract(image)
-        if tesseract_result[0]:
-            results.append(tesseract_result)
+        # Try different preprocessing methods
+        preprocessing_methods = [
+            None,  # No preprocessing
+            "standard",
+            "enhanced",
+            "inverse",
+            "adaptive",
+            "printed"
+        ]
 
-        # Use EasyOCR if available
-        if EASYOCR_AVAILABLE:
-            easyocr_result = self.recognize_with_easyocr(image)
-            if easyocr_result[0]:
-                results.append(easyocr_result)
+        for method in preprocessing_methods:
+            result = self.recognize_with_easyocr(image, method)
+            if result[0]:  # If text was detected
+                results.append(result)
 
+        if not results:
+            return "No text detected", 0, "no_valid_results"
+
+        # If only one valid result, return it
+        if len(results) == 1:
+            return results[0]
+
+        # Strategy 1: Select result with highest confidence
+        best_by_confidence = max(results, key=lambda x: x[1])
+
+        # Strategy 2: Check if multiple methods detected similar text
+        texts = [r[0] for r in results]
+        text_matches = {}
+
+        for i, text1 in enumerate(texts):
+            for j, text2 in enumerate(texts):
+                if i < j:
+                    similarity = difflib.SequenceMatcher(None, text1, text2).ratio()
+                    if similarity > 0.7:  # Texts are similar
+                        # Choose the one with higher confidence
+                        if results[i][1] > results[j][1]:
+                            text_matches[text1] = text_matches.get(text1, 0) + 1
+                        else:
+                            text_matches[text2] = text_matches.get(text2, 0) + 1
+
+        # If we found similar texts across preprocessing methods
+        if text_matches:
+            most_common_text = max(text_matches.items(), key=lambda x: x[1])[0]
+            # Find the result with this text
+            for result in results:
+                if result[0] == most_common_text:
+                    return result
+
+        # Default to highest confidence
+        return best_by_confidence
 
     def save_result(self, text, confidence, method, image_path=None, output_dir="results"):
         """Save OCR result to a file"""

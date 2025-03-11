@@ -1,4 +1,0 @@
-Text: Casino 
-Confidence: 95.83%
-Method: easyocr
-Source: test_images\capture_1741700398_0.jpg

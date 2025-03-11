@@ -1,4 +1,0 @@
-Text: 6 Choge (tilba
-Confidence: 56.10%
-Method: easyocr_original
-Source: test_images\capture_1741703178_1.jpg

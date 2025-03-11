@@ -1,4 +1,0 @@
-Text: Jeri C€ T Da}
-Confidence: 32.86%
-Method: easyocr_original
-Source: test_images\capture_1741703346_1.jpg

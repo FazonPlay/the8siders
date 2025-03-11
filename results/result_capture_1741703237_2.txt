@@ -1,4 +1,0 @@
-Text: No text detected
-Confidence: 0.00%
-Method: no_valid_results
-Source: test_images\capture_1741703237_2.jpg
