@@ -112,7 +112,6 @@ def main():
     parser.add_argument("--no-display", action="store_true", help="Don't display results visually")
     parser.add_argument("--captures", type=int, default=3, help="Number of images to capture (default: 3)")
     args = parser.parse_args()
-
     # Create necessary directories
     setup_directories()
 

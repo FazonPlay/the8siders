@@ -1,0 +1,4 @@
+Text: L
+Confidence: 26.97%
+Method: easyocr_enhanced
+Source: test_images\capture_1741700782_1.jpg

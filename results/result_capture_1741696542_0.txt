@@ -1,0 +1,4 @@
+Text: we y
+Confidence: 59.00%
+Method: tesseract_prep1_config0
+Source: test_images\capture_1741696542_0.jpg

@@ -1,0 +1,4 @@
+Text: ral
+Confidence: 49.00%
+Method: tesseract_prep3_config2
+Source: test_images\capture_1741699707_2.jpg

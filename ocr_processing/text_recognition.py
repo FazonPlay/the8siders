@@ -15,14 +15,6 @@ try:
 except ImportError:
     EASYOCR_AVAILABLE = False
 
-try:
-    from paddleocr import PaddleOCR
-
-    PADDLEOCR_AVAILABLE = True
-except ImportError:
-    PADDLEOCR_AVAILABLE = False
-
-
 class OCRProcessor:
 
 
@@ -35,9 +27,6 @@ class OCRProcessor:
         # Initialize optional OCR engines
         if EASYOCR_AVAILABLE:
             self.easyocr_reader = easyocr.Reader(['en'])
-
-        if PADDLEOCR_AVAILABLE:
-            self.paddleocr_reader = PaddleOCR(use_angle_cls=True, lang='en', show_log=False)
 
     def preprocess_image_standard(self, image):
         """Standard preprocessing pipeline for OCR"""
@@ -215,42 +204,6 @@ class OCRProcessor:
             return None, 0, "easyocr_error"
 
 
-
-    def recognize_with_paddleocr(self, image):
-        """Recognize text using PaddleOCR"""
-        if not PADDLEOCR_AVAILABLE:
-            return None, 0, "paddleocr_not_available"
-
-        try:
-            # Run PaddleOCR
-            result = self.paddleocr_reader.ocr(image, cls=True)
-
-            if not result or not result[0]:
-                return None, 0, "paddleocr_no_text"
-
-            texts = []
-            confidences = []
-
-            for line in result[0]:
-                text = line[1][0]  # Extract text
-                prob = line[1][1] * 100  # Extract confidence and convert to percentage
-
-                if text.strip():
-                    texts.append(text)
-                    confidences.append(prob)
-
-            full_text = ' '.join(texts)
-            avg_confidence = sum(confidences) / len(confidences) if confidences else 0
-
-            # Debug: log the result
-            print(f"PaddleOCR: '{full_text}' (Conf: {avg_confidence:.2f}%)")
-
-            return full_text, avg_confidence, "paddleocr"
-
-        except Exception as e:
-            print(f"Error with PaddleOCR: {e}")
-            return None, 0, "paddleocr_error"
-
     def get_best_result(self, results):
         """Determine the best result from multiple OCR engines"""
         # Filter out None results
@@ -327,19 +280,6 @@ class OCRProcessor:
             if easyocr_result[0]:
                 results.append(easyocr_result)
 
-        # Use PaddleOCR if available
-        if PADDLEOCR_AVAILABLE:
-            paddleocr_result = self.recognize_with_paddleocr(image)
-            if paddleocr_result[0]:
-                results.append(paddleocr_result)
-
-        # Get the best result
-        text, confidence, method = self.get_best_result(results)
-
-        self.last_result = text
-        self.confidence = confidence
-
-        return text, confidence, method
 
     def save_result(self, text, confidence, method, image_path=None, output_dir="results"):
         """Save OCR result to a file"""

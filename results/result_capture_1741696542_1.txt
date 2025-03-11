@@ -1,0 +1,4 @@
+Text: —_.
+Confidence: 48.00%
+Method: tesseract_prep1_config4
+Source: test_images\capture_1741696542_1.jpg

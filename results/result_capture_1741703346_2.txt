@@ -1,0 +1,4 @@
+Text: 64nrcte1/0 Eice
+Confidence: 21.81%
+Method: easyocr_enhanced
+Source: test_images\capture_1741703346_2.jpg

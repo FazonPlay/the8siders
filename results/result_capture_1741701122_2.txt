@@ -1,0 +1,4 @@
+Text: ((
+Confidence: 67.20%
+Method: easyocr_enhanced
+Source: test_images\capture_1741701122_2.jpg

@@ -1,0 +1,4 @@
+Text: PF
+Confidence: 50.00%
+Method: tesseract_prep2_config2
+Source: test_images\capture_1741700283_1.jpg
