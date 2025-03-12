@@ -4,40 +4,65 @@ import os
 
 
 class Camera:
-    def __init__(self, camera_index=0):
+    def __init__(self, camera_index=1):
         self.camera_index = camera_index
         self.cap = None
+        self.width = 1920
+        self.height = 1080
+
+    @staticmethod
+    def list_available_cameras(max_cameras=10):
+        """List all available camera devices"""
+        available_cameras = []
+        for i in range(max_cameras):
+            cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
+            if cap.isOpened():
+                ret, _ = cap.read()
+                if ret:
+                    available_cameras.append(i)
+                cap.release()
+        return available_cameras
 
     def initialize(self):
-        self.cap = cv2.VideoCapture(self.camera_index)
-        if not self.cap.isOpened():
-            raise Exception("Could not open video device")
+        # Try DirectShow backend on Windows
+        self.cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
 
-        # Set camera properties for better image quality
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-        self.cap.set(cv2.CAP_PROP_AUTOFOCUS, 1)  # Enable autofocus if available
+        if not self.cap.isOpened():
+            self.cap = cv2.VideoCapture(self.camera_index)  # Try default backend
+
+        if not self.cap.isOpened():
+            raise Exception(f"Could not open camera device at index {self.camera_index}")
+
+        # Try to set resolution, with fallbacks
+        resolutions = [(1920, 1080), (1280, 720), (800, 600), (640, 480)]
+
+        for width, height in resolutions:
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+
+            # Read a test frame to see if the resolution worked
+            ret, frame = self.cap.read()
+            if ret and frame is not None:
+                self.width = width
+                self.height = height
+                break
+
+        # Set autofocus
+        self.cap.set(cv2.CAP_PROP_AUTOFOCUS, 1)
 
     def capture_image(self, save_path=None):
-        if self.cap is None:
+        if self.cap is None or not self.cap.isOpened():
             self.initialize()
 
         # Allow camera to adjust to lighting
-        time.sleep(1.0)
-
-        # Capture multiple frames to let camera stabilize and choose best
-        frames = []
-        for _ in range(5):
-            ret, frame = self.cap.read()
-            if ret:
-                frames.append(frame)
+        for _ in range(5):  # Discard first few frames
+            ret, _ = self.cap.read()
             time.sleep(0.1)
 
-        if not frames:
-            raise Exception("Failed to capture any images")
+        ret, frame = self.cap.read()
 
-        # Use the last frame (most stabilized)
-        frame = frames[-1]
+        if not ret or frame is None:
+            return None
 
         if save_path:
             os.makedirs(os.path.dirname(save_path), exist_ok=True)
@@ -46,7 +71,6 @@ class Camera:
         return frame
 
     def capture_multiple(self, num_images=3, delay=0.5, save_dir="test_images"):
-        """Capture multiple images with slight variations for better OCR results"""
         os.makedirs(save_dir, exist_ok=True)
         timestamp = int(time.time())
 
@@ -56,12 +80,15 @@ class Camera:
         for i in range(num_images):
             path = os.path.join(save_dir, f"capture_{timestamp}_{i}.jpg")
             image = self.capture_image(save_path=path)
-            images.append(image)
-            paths.append(path)
+
+            if image is not None:
+                images.append(image)
+                paths.append(path)
+
             time.sleep(delay)
 
         return images, paths
 
     def release(self):
-        if self.cap:
+        if self.cap and self.cap.isOpened():
             self.cap.release()

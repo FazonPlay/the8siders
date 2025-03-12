@@ -141,22 +141,25 @@ class OCRProcessor:
             elif preprocessing_method == "printed":
                 processed_image = self.preprocess_for_printed_text(image)
             else:
-                # If no preprocessing method specified, use grayscale conversion
                 processed_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
             # Run EasyOCR
             results = self.easyocr_reader.readtext(processed_image)
 
             if not results:
-                return None, 0, f"easyocr_{preprocessing_method}_no_text"
+                return None, 0, f"easyocr_{preprocessing_method}_notext"
 
             texts = []
             confidences = []
 
             for (bbox, text, prob) in results:
-                if text.strip():
+                text = text.strip()
+                if text and text.startswith("JD"):
                     texts.append(text)
-                    confidences.append(prob * 100)  # Convert to percentage
+                    confidences.append(prob * 100)
+
+            if not texts:
+                return None, 0, f"easyocr_{preprocessing_method}_no_jd"
 
             full_text = ' '.join(texts)
             avg_confidence = sum(confidences) / len(confidences) if confidences else 0
