@@ -9,7 +9,6 @@ import difflib
 # Try to import OCR engines
 try:
     import easyocr
-
     EASYOCR_AVAILABLE = True
 except ImportError:
     EASYOCR_AVAILABLE = False
@@ -17,9 +16,7 @@ except ImportError:
 
 try:
     import pytesseract
-
-    pytesseract.pytesseract.tesseract_cmd = r'C:\Installed Apps\tesseract.exe'
-
+    pytesseract.pytesseract.tesseract_cmd = r'C:\Installed Apps\tesseract.exe' # put your directory of tesseract installation
     TESSERACT_AVAILABLE = True
 except ImportError:
     TESSERACT_AVAILABLE = False
@@ -27,7 +24,6 @@ except ImportError:
 
 try:
     from paddleocr import PaddleOCR
-
     PADDLE_AVAILABLE = True
 except ImportError:
     PADDLE_AVAILABLE = False
@@ -50,8 +46,7 @@ class OCRProcessor:
 
         # Check if at least one OCR engine is available
         if not (EASYOCR_AVAILABLE or TESSERACT_AVAILABLE or PADDLE_AVAILABLE):
-            raise RuntimeError(
-                "No OCR engine available. Please install at least one: easyocr, pytesseract, or paddleocr")
+            raise RuntimeError("No OCR engine available. Please install at least one: easyocr, pytesseract, or paddleocr")
 
     def preprocess_image_standard(self, image):
         """Standard preprocessing pipeline for OCR"""
@@ -106,7 +101,10 @@ class OCRProcessor:
     def recognize_with_easyocr(self, image, preprocessing_method=None):
         """Recognize text using EasyOCR with optional preprocessing"""
         if not EASYOCR_AVAILABLE:
-            return None, 0, f"easyocr_{preprocessing_method}_not_available"
+            return None, 0, f"easyocr_{preprocessing_method}_not_available", 0
+
+        start_time = time.time()
+        preproc_start = time.time()
 
         try:
             # Apply preprocessing
@@ -123,11 +121,18 @@ class OCRProcessor:
             else:
                 processed_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
+            preproc_time = time.time() - preproc_start
+            ocr_start = time.time()
+
             # Run EasyOCR
             results = self.easyocr_reader.readtext(processed_image)
 
+            ocr_time = time.time() - ocr_start
+
             if not results:
-                return None, 0, f"easyocr_{preprocessing_method}_notext"
+                total_time = time.time() - start_time
+                print(f"EasyOCR ({preprocessing_method}): No text detected - {total_time:.3f}s (preproc: {preproc_time:.3f}s, OCR: {ocr_time:.3f}s)")
+                return None, 0, f"easyocr_{preprocessing_method}_notext", total_time
 
             texts = []
             confidences = []
@@ -139,26 +144,33 @@ class OCRProcessor:
                     confidences.append(prob * 100)
 
             if not texts:
-                return None, 0, f"easyocr_{preprocessing_method}_no_jd"
+                total_time = time.time() - start_time
+                print(f"EasyOCR ({preprocessing_method}): No JD codes found - {total_time:.3f}s (preproc: {preproc_time:.3f}s, OCR: {ocr_time:.3f}s)")
+                return None, 0, f"easyocr_{preprocessing_method}_no_jd", total_time
 
             full_text = ' '.join(texts)
             avg_confidence = sum(confidences) / len(confidences) if confidences else 0
+            total_time = time.time() - start_time
 
-            print(f"EasyOCR ({preprocessing_method}): '{full_text}' (Conf: {avg_confidence:.2f}%)")
+            print(f"EasyOCR ({preprocessing_method}): '{full_text}' (Conf: {avg_confidence:.2f}%) - {total_time:.3f}s (preproc: {preproc_time:.3f}s, OCR: {ocr_time:.3f}s)")
 
-            return full_text, avg_confidence, f"easyocr_{preprocessing_method}"
+            return full_text, avg_confidence, f"easyocr_{preprocessing_method}", total_time
 
         except Exception as e:
-            print(f"Error with EasyOCR ({preprocessing_method}): {e}")
-            return None, 0, f"easyocr_{preprocessing_method}_error"
+            total_time = time.time() - start_time
+            print(f"Error with EasyOCR ({preprocessing_method}): {e} - {total_time:.3f}s")
+            return None, 0, f"easyocr_{preprocessing_method}_error", total_time
 
     def recognize_with_tesseract(self, image, preprocessing_method=None):
         """Recognize text using Tesseract with optional preprocessing"""
         if not TESSERACT_AVAILABLE:
-            return None, 0, f"tesseract_{preprocessing_method}_not_available"
+            return None, 0, f"tesseract_{preprocessing_method}_not_available", 0
+
+        start_time = time.time()
+        preproc_start = time.time()
 
         try:
-            # Apply the same preprocessing methods
+            # Apply preprocessing
             if preprocessing_method == "standard":
                 processed_image = self.preprocess_image_standard(image)
             elif preprocessing_method == "enhanced":
@@ -172,11 +184,16 @@ class OCRProcessor:
             else:
                 processed_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
+            preproc_time = time.time() - preproc_start
+            ocr_start = time.time()
+
             # Tesseract configuration parameters
             config = '--oem 1 --psm 11 -c tessedit_char_whitelist="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-"'
 
             # Run Tesseract
             text = pytesseract.image_to_string(processed_image, config=config)
+
+            ocr_time = time.time() - ocr_start
             text = text.strip()
 
             # Find JD references
@@ -184,27 +201,33 @@ class OCRProcessor:
             matches = re.findall(jd_pattern, text)
 
             if not matches:
-                return None, 0, f"tesseract_{preprocessing_method}_no_jd"
+                total_time = time.time() - start_time
+                print(f"Tesseract ({preprocessing_method}): No JD codes found - {total_time:.3f}s (preproc: {preproc_time:.3f}s, OCR: {ocr_time:.3f}s)")
+                return None, 0, f"tesseract_{preprocessing_method}_no_jd", total_time
 
             full_text = ' '.join(matches)
-            # Tesseract doesn't provide confidence, use a fixed value
-            confidence = 70
+            confidence = 70  # Fixed value
+            total_time = time.time() - start_time
 
-            print(f"Tesseract ({preprocessing_method}): '{full_text}' (Conf: {confidence:.2f}%)")
+            print(f"Tesseract ({preprocessing_method}): '{full_text}' (Conf: {confidence:.2f}%) - {total_time:.3f}s (preproc: {preproc_time:.3f}s, OCR: {ocr_time:.3f}s)")
 
-            return full_text, confidence, f"tesseract_{preprocessing_method}"
+            return full_text, confidence, f"tesseract_{preprocessing_method}", total_time
 
         except Exception as e:
-            print(f"Error with Tesseract ({preprocessing_method}): {e}")
-            return None, 0, f"tesseract_{preprocessing_method}_error"
+            total_time = time.time() - start_time
+            print(f"Error with Tesseract ({preprocessing_method}): {e} - {total_time:.3f}s")
+            return None, 0, f"tesseract_{preprocessing_method}_error", total_time
 
     def recognize_with_paddleocr(self, image, preprocessing_method=None):
         """Recognize text using PaddleOCR with optional preprocessing"""
         if not PADDLE_AVAILABLE:
-            return None, 0, f"paddle_{preprocessing_method}_not_available"
+            return None, 0, f"paddle_{preprocessing_method}_not_available", 0
+
+        start_time = time.time()
+        preproc_start = time.time()
 
         try:
-            # Apply the same preprocessing methods
+            # Apply preprocessing
             if preprocessing_method == "standard":
                 processed_image = self.preprocess_image_standard(image)
             elif preprocessing_method == "enhanced":
@@ -218,15 +241,21 @@ class OCRProcessor:
             else:
                 processed_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-            # Save preprocessed image to a temporary file (PaddleOCR works better with files)
+            preproc_time = time.time() - preproc_start
+
+            # Save preprocessed image to a temporary file
             temp_path = os.path.join(self.debug_dir, f"paddle_temp_{preprocessing_method}.jpg")
             cv2.imwrite(temp_path, processed_image)
 
+            ocr_start = time.time()
             # Run PaddleOCR
             results = self.paddle_reader.ocr(temp_path, cls=True)
+            ocr_time = time.time() - ocr_start
 
             if not results or len(results) == 0 or len(results[0]) == 0:
-                return None, 0, f"paddle_{preprocessing_method}_notext"
+                total_time = time.time() - start_time
+                print(f"PaddleOCR ({preprocessing_method}): No text detected - {total_time:.3f}s (preproc: {preproc_time:.3f}s, OCR: {ocr_time:.3f}s)")
+                return None, 0, f"paddle_{preprocessing_method}_notext", total_time
 
             texts = []
             confidences = []
@@ -240,66 +269,92 @@ class OCRProcessor:
                     confidences.append(conf)
 
             if not texts:
-                return None, 0, f"paddle_{preprocessing_method}_no_jd"
+                total_time = time.time() - start_time
+                print(f"PaddleOCR ({preprocessing_method}): No JD codes found - {total_time:.3f}s (preproc: {preproc_time:.3f}s, OCR: {ocr_time:.3f}s)")
+                return None, 0, f"paddle_{preprocessing_method}_no_jd", total_time
 
             full_text = ' '.join(texts)
             avg_confidence = sum(confidences) / len(confidences) if confidences else 0
+            total_time = time.time() - start_time
 
-            print(f"PaddleOCR ({preprocessing_method}): '{full_text}' (Conf: {avg_confidence:.2f}%)")
+            print(f"PaddleOCR ({preprocessing_method}): '{full_text}' (Conf: {avg_confidence:.2f}%) - {total_time:.3f}s (preproc: {preproc_time:.3f}s, OCR: {ocr_time:.3f}s)")
 
-            return full_text, avg_confidence, f"paddle_{preprocessing_method}"
+            return full_text, avg_confidence, f"paddle_{preprocessing_method}", total_time
 
         except Exception as e:
-            print(f"Error with PaddleOCR ({preprocessing_method}): {e}")
-            return None, 0, f"paddle_{preprocessing_method}_error"
+            total_time = time.time() - start_time
+            print(f"Error with PaddleOCR ({preprocessing_method}): {e} - {total_time:.3f}s")
+            return None, 0, f"paddle_{preprocessing_method}_error", total_time
 
     def recognize_text(self, image):
         """Recognize text using multiple OCR engines with multiple preprocessing strategies"""
+        total_start_time = time.time()
         all_results = []
         preprocessing_methods = [None, "standard", "enhanced", "inverse", "adaptive", "printed"]
 
         print("\n===== RUNNING ALL OCR ENGINES =====")
 
+        # Track timings for each engine
+        engine_times = {
+            "easyocr": 0.0,
+            "tesseract": 0.0,
+            "paddle": 0.0
+        }
+
         # EasyOCR results
+        easyocr_start = time.time()
         easyocr_results = []
         for method in preprocessing_methods:
             result = self.recognize_with_easyocr(image, method)
             if result[0]:  # If text was detected
                 easyocr_results.append(result)
-                all_results.append(result)
+                all_results.append(result[:3])  # Only include text, confidence, method
+                engine_times["easyocr"] += result[3]  # Add time
+
+        easyocr_total_time = time.time() - easyocr_start
 
         # Tesseract results
+        tesseract_start = time.time()
         tesseract_results = []
         if TESSERACT_AVAILABLE:
             for method in preprocessing_methods:
                 result = self.recognize_with_tesseract(image, method)
                 if result[0]:
                     tesseract_results.append(result)
-                    all_results.append(result)
+                    all_results.append(result[:3])
+                    engine_times["tesseract"] += result[3]
+
+        tesseract_total_time = time.time() - tesseract_start
 
         # PaddleOCR results
+        paddle_start = time.time()
         paddle_results = []
         if PADDLE_AVAILABLE:
             for method in preprocessing_methods:
                 result = self.recognize_with_paddleocr(image, method)
                 if result[0]:
                     paddle_results.append(result)
-                    all_results.append(result)
+                    all_results.append(result[:3])
+                    engine_times["paddle"] += result[3]
+
+        paddle_total_time = time.time() - paddle_start
 
         # Log summary of results by engine
         print("\n===== OCR RESULTS SUMMARY =====")
-        print(f"EasyOCR: {len(easyocr_results)} valid results")
-        print(f"Tesseract: {len(tesseract_results)} valid results")
-        print(f"PaddleOCR: {len(paddle_results)} valid results")
+        print(f"EasyOCR: {len(easyocr_results)} valid results, total time: {easyocr_total_time:.3f}s")
+        print(f"Tesseract: {len(tesseract_results)} valid results, total time: {tesseract_total_time:.3f}s")
+        print(f"PaddleOCR: {len(paddle_results)} valid results, total time: {paddle_total_time:.3f}s")
         print(f"Total valid results: {len(all_results)}")
+
+        total_processing_time = time.time() - total_start_time
+        print(f"Total processing time: {total_processing_time:.3f}s")
 
         if not all_results:
             return "No text detected", 0, "no_valid_results"
 
         # Strategy 1: Select result with highest confidence
         best_by_confidence = max(all_results, key=lambda x: x[1])
-        print(
-            f"\nBest by confidence: '{best_by_confidence[0]}' ({best_by_confidence[2]}) - {best_by_confidence[1]:.2f}%")
+        print(f"\nBest by confidence: '{best_by_confidence[0]}' ({best_by_confidence[2]}) - {best_by_confidence[1]:.2f}%")
 
         # Strategy 2: Find most common text across all OCR engines
         texts = [r[0] for r in all_results]
