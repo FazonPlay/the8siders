@@ -9,6 +9,7 @@ import difflib
 # Try to import OCR engines
 try:
     import easyocr
+
     EASYOCR_AVAILABLE = True
 except ImportError:
     EASYOCR_AVAILABLE = False
@@ -16,7 +17,8 @@ except ImportError:
 
 try:
     import pytesseract
-    pytesseract.pytesseract.tesseract_cmd = r'C:\Installed Apps\tesseract.exe' # put your directory of tesseract installation
+
+    pytesseract.pytesseract.tesseract_cmd = r'C:\Installed Apps\tesseract.exe'  # Update to your path
     TESSERACT_AVAILABLE = True
 except ImportError:
     TESSERACT_AVAILABLE = False
@@ -24,6 +26,7 @@ except ImportError:
 
 try:
     from paddleocr import PaddleOCR
+
     PADDLE_AVAILABLE = True
 except ImportError:
     PADDLE_AVAILABLE = False
@@ -46,7 +49,8 @@ class OCRProcessor:
 
         # Check if at least one OCR engine is available
         if not (EASYOCR_AVAILABLE or TESSERACT_AVAILABLE or PADDLE_AVAILABLE):
-            raise RuntimeError("No OCR engine available. Please install at least one: easyocr, pytesseract, or paddleocr")
+            raise RuntimeError(
+                "No OCR engine available. Please install at least one: easyocr, pytesseract, or paddleocr")
 
     def preprocess_image_standard(self, image):
         """Standard preprocessing pipeline for OCR"""
@@ -98,6 +102,29 @@ class OCRProcessor:
         cv2.imwrite(os.path.join(self.debug_dir, "5_printed_text.jpg"), binary)
         return binary
 
+    def preprocess_for_jd_format(self, image):
+        """Specialized preprocessing for 'JD XXXXXXX XXXX X' format"""
+        # Resize for better readability of small text
+        img = cv2.resize(image, None, fx=2.5, fy=2.5, interpolation=cv2.INTER_CUBIC)
+
+        # Convert to grayscale
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+        # CLAHE for improved contrast
+        clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+        enhanced = clahe.apply(gray)
+
+        # Sharpen image to improve character edges
+        kernel = np.array([[-1, -1, -1], [-1, 9, -1], [-1, -1, -1]])
+        sharpened = cv2.filter2D(enhanced, -1, kernel)
+
+        # Binary thresholding with high threshold to preserve spaces
+        _, binary = cv2.threshold(sharpened, 150, 255, cv2.THRESH_BINARY)
+
+        # Save debug image
+        cv2.imwrite(os.path.join(self.debug_dir, "jd_format_preproc.jpg"), binary)
+        return binary
+
     def recognize_with_easyocr(self, image, preprocessing_method=None):
         """Recognize text using EasyOCR with optional preprocessing"""
         if not EASYOCR_AVAILABLE:
@@ -118,6 +145,8 @@ class OCRProcessor:
                 processed_image = self.preprocess_image_adaptive(image)
             elif preprocessing_method == "printed":
                 processed_image = self.preprocess_for_printed_text(image)
+            elif preprocessing_method == "jd_format":
+                processed_image = self.preprocess_for_jd_format(image)
             else:
                 processed_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
@@ -127,34 +156,75 @@ class OCRProcessor:
             # Run EasyOCR
             results = self.easyocr_reader.readtext(processed_image)
 
+            # Debug - print all detected text
+            print("DEBUG - RAW EasyOCR results:")
+            for (bbox, text, prob) in results:
+                print(f"  '{text}' (Confidence: {prob * 100:.2f}%)")
+
             ocr_time = time.time() - ocr_start
 
             if not results:
                 total_time = time.time() - start_time
-                print(f"EasyOCR ({preprocessing_method}): No text detected - {total_time:.3f}s (preproc: {preproc_time:.3f}s, OCR: {ocr_time:.3f}s)")
+                print(
+                    f"EasyOCR ({preprocessing_method}): No text detected - {total_time:.3f}s (preproc: {preproc_time:.3f}s, OCR: {ocr_time:.3f}s)")
                 return None, 0, f"easyocr_{preprocessing_method}_notext", total_time
 
-            texts = []
-            confidences = []
+            # First check if we have a JD code in the results
+            jd_found = False
+            jd_fragments = []
+            other_fragments = []
 
-            for (bbox, text, prob) in results:
+            # Sort results by bbox position (top to bottom, left to right)
+            sorted_results = sorted(results, key=lambda x: (x[0][0][1], x[0][0][0]))
+
+            for (bbox, text, prob) in sorted_results:
                 text = text.strip()
-                if text and text.startswith("JD"):
-                    texts.append(text)
-                    confidences.append(prob * 100)
+                print(f"DEBUG - Detected text: '{text}'")
 
-            if not texts:
+                # Check if this is a JD prefix
+                if text == "JD" or text.startswith("JD "):
+                    jd_found = True
+                    jd_fragments.append((text, prob * 100, bbox))
+                # If we already found JD, collect subsequent fragments
+                elif jd_found:
+                    other_fragments.append((text, prob * 100, bbox))
+                # Also check for common OCR errors in the JD prefix
+                elif text in ["ID", "J0", "I0", "JO"]:
+                    jd_found = True
+                    corrected = "JD"
+                    jd_fragments.append((corrected, prob * 100 * 0.9, bbox))
+                    print(f"DEBUG - Corrected '{text}' to '{corrected}'")
+                else:
+                    other_fragments.append((text, prob * 100, bbox))
+
+            # Now combine fragments to form complete JD code
+            if jd_found:
+                # Start with the JD prefix
+                combined_text = jd_fragments[0][0]
+                confidences = [jd_fragments[0][1]]
+
+                # Add fragments that may be part of the code
+                for text, conf, _ in other_fragments:
+                    if combined_text.endswith(" "):
+                        combined_text += text
+                    else:
+                        combined_text += " " + text
+                    confidences.append(conf)
+
+                print(f"DEBUG - Combined JD code: '{combined_text}'")
+                avg_confidence = sum(confidences) / len(confidences) if confidences else 0
                 total_time = time.time() - start_time
-                print(f"EasyOCR ({preprocessing_method}): No JD codes found - {total_time:.3f}s (preproc: {preproc_time:.3f}s, OCR: {ocr_time:.3f}s)")
-                return None, 0, f"easyocr_{preprocessing_method}_no_jd", total_time
 
-            full_text = ' '.join(texts)
-            avg_confidence = sum(confidences) / len(confidences) if confidences else 0
+                print(
+                    f"EasyOCR ({preprocessing_method}): '{combined_text}' (Conf: {avg_confidence:.2f}%) - {total_time:.3f}s (preproc: {preproc_time:.3f}s, OCR: {ocr_time:.3f}s)")
+
+                return combined_text, avg_confidence, f"easyocr_{preprocessing_method}", total_time
+
+            # If no JD code found
             total_time = time.time() - start_time
-
-            print(f"EasyOCR ({preprocessing_method}): '{full_text}' (Conf: {avg_confidence:.2f}%) - {total_time:.3f}s (preproc: {preproc_time:.3f}s, OCR: {ocr_time:.3f}s)")
-
-            return full_text, avg_confidence, f"easyocr_{preprocessing_method}", total_time
+            print(
+                f"EasyOCR ({preprocessing_method}): No JD codes found - {total_time:.3f}s (preproc: {preproc_time:.3f}s, OCR: {ocr_time:.3f}s)")
+            return None, 0, f"easyocr_{preprocessing_method}_no_jd", total_time
 
         except Exception as e:
             total_time = time.time() - start_time
@@ -181,14 +251,16 @@ class OCRProcessor:
                 processed_image = self.preprocess_image_adaptive(image)
             elif preprocessing_method == "printed":
                 processed_image = self.preprocess_for_printed_text(image)
+            elif preprocessing_method == "jd_format":
+                processed_image = self.preprocess_for_jd_format(image)
             else:
                 processed_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
             preproc_time = time.time() - preproc_start
             ocr_start = time.time()
 
-            # Tesseract configuration parameters
-            config = '--oem 1 --psm 11 -c tessedit_char_whitelist="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-"'
+            # Fix: Tesseract configuration - escape quotes properly
+            config = r'--oem 1 --psm 11 -c tessedit_char_whitelist="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789- "'
 
             # Run Tesseract
             text = pytesseract.image_to_string(processed_image, config=config)
@@ -196,20 +268,40 @@ class OCRProcessor:
             ocr_time = time.time() - ocr_start
             text = text.strip()
 
-            # Find JD references
-            jd_pattern = r'JD[A-Z0-9\-]+'
-            matches = re.findall(jd_pattern, text)
+            print(f"DEBUG - RAW Tesseract result: '{text}'")
 
-            if not matches:
+            # Find JD references
+            texts = []
+            confidences = []
+
+            if text:
+                # Debug - show detected text
+                print(f"DEBUG - Detected text: '{text}'")
+
+                # Match JD pattern with optional space after JD
+                if "JD" in text:
+                    texts.append(text)
+                    confidences.append(70)  # Fixed confidence for Tesseract
+                    print(f"DEBUG - Matched JD code: '{text}'")
+                # Also match common OCR errors
+                elif any(err in text for err in ["ID", "J0", "I0", "JO"]):
+                    corrected = text.replace("ID", "JD").replace("J0", "JD").replace("I0", "JD").replace("JO", "JD")
+                    texts.append(corrected)
+                    confidences.append(65)  # Reduced confidence for correction
+                    print(f"DEBUG - Corrected to '{corrected}'")
+
+            if not texts:
                 total_time = time.time() - start_time
-                print(f"Tesseract ({preprocessing_method}): No JD codes found - {total_time:.3f}s (preproc: {preproc_time:.3f}s, OCR: {ocr_time:.3f}s)")
+                print(
+                    f"Tesseract ({preprocessing_method}): No JD codes found - {total_time:.3f}s (preproc: {preproc_time:.3f}s, OCR: {ocr_time:.3f}s)")
                 return None, 0, f"tesseract_{preprocessing_method}_no_jd", total_time
 
-            full_text = ' '.join(matches)
-            confidence = 70  # Fixed value
+            full_text = ' '.join(texts)
+            confidence = sum(confidences) / len(confidences)
             total_time = time.time() - start_time
 
-            print(f"Tesseract ({preprocessing_method}): '{full_text}' (Conf: {confidence:.2f}%) - {total_time:.3f}s (preproc: {preproc_time:.3f}s, OCR: {ocr_time:.3f}s)")
+            print(
+                f"Tesseract ({preprocessing_method}): '{full_text}' (Conf: {confidence:.2f}%) - {total_time:.3f}s (preproc: {preproc_time:.3f}s, OCR: {ocr_time:.3f}s)")
 
             return full_text, confidence, f"tesseract_{preprocessing_method}", total_time
 
@@ -238,6 +330,8 @@ class OCRProcessor:
                 processed_image = self.preprocess_image_adaptive(image)
             elif preprocessing_method == "printed":
                 processed_image = self.preprocess_for_printed_text(image)
+            elif preprocessing_method == "jd_format":
+                processed_image = self.preprocess_for_jd_format(image)
             else:
                 processed_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
@@ -252,34 +346,84 @@ class OCRProcessor:
             results = self.paddle_reader.ocr(temp_path, cls=True)
             ocr_time = time.time() - ocr_start
 
-            if not results or len(results) == 0 or len(results[0]) == 0:
+            # Print raw results for debugging
+            print("DEBUG - RAW PaddleOCR results:")
+            all_texts = []
+
+            # Handle different result formats from PaddleOCR
+            if results:
+                # Try to safely extract and print all detected text
+                try:
+                    for result in results:
+                        if result:
+                            if isinstance(result, list):
+                                for line in result:
+                                    if line and isinstance(line, list) and len(line) >= 2:
+                                        if isinstance(line[1], tuple) and len(line[1]) >= 2:
+                                            text = line[1][0]
+                                            conf = line[1][1]
+                                            print(f"  '{text}' (Confidence: {conf * 100:.2f}%)")
+                                            all_texts.append((text, conf * 100))
+                except Exception as print_err:
+                    print(f"Error printing PaddleOCR results: {print_err}")
+
+            if not all_texts:
                 total_time = time.time() - start_time
-                print(f"PaddleOCR ({preprocessing_method}): No text detected - {total_time:.3f}s (preproc: {preproc_time:.3f}s, OCR: {ocr_time:.3f}s)")
+                print(f"PaddleOCR ({preprocessing_method}): No text detected - {total_time:.3f}s")
                 return None, 0, f"paddle_{preprocessing_method}_notext", total_time
 
-            texts = []
-            confidences = []
+            # Look for JD codes in combined text
+            jd_fragments = []
+            other_fragments = []
+            jd_found = False
 
-            for line in results[0]:
-                text = line[1][0].strip()
-                conf = line[1][1] * 100  # Convert to percentage
+            # Sort texts by position (approximate)
+            for text, conf in all_texts:
+                text = text.strip()
+                print(f"DEBUG - Detected text: '{text}'")
 
-                if text and text.startswith("JD"):
-                    texts.append(text)
+                # Check for JD prefix
+                if text == "JD" or text.startswith("JD "):
+                    jd_found = True
+                    jd_fragments.append((text, conf))
+                # If we already found JD, collect subsequent fragments
+                elif jd_found:
+                    other_fragments.append((text, conf))
+                # Check for common OCR errors
+                elif text in ["ID", "J0", "I0", "JO"]:
+                    jd_found = True
+                    jd_fragments.append(("JD", conf * 0.9))
+                    print(f"DEBUG - Corrected '{text}' to 'JD'")
+                else:
+                    other_fragments.append((text, conf))
+
+            # Combine fragments to form complete JD code
+            if jd_found:
+                # Start with JD prefix
+                combined_text = jd_fragments[0][0]
+                confidences = [jd_fragments[0][1]]
+
+                # Add remaining fragments
+                for text, conf in other_fragments:
+                    if combined_text.endswith(" "):
+                        combined_text += text
+                    else:
+                        combined_text += " " + text
                     confidences.append(conf)
 
-            if not texts:
+                print(f"DEBUG - Combined JD code: '{combined_text}'")
+                avg_confidence = sum(confidences) / len(confidences) if confidences else 0
                 total_time = time.time() - start_time
-                print(f"PaddleOCR ({preprocessing_method}): No JD codes found - {total_time:.3f}s (preproc: {preproc_time:.3f}s, OCR: {ocr_time:.3f}s)")
-                return None, 0, f"paddle_{preprocessing_method}_no_jd", total_time
 
-            full_text = ' '.join(texts)
-            avg_confidence = sum(confidences) / len(confidences) if confidences else 0
+                print(
+                    f"PaddleOCR ({preprocessing_method}): '{combined_text}' (Conf: {avg_confidence:.2f}%) - {total_time:.3f}s")
+
+                return combined_text, avg_confidence, f"paddle_{preprocessing_method}", total_time
+
+            # If no JD code found
             total_time = time.time() - start_time
-
-            print(f"PaddleOCR ({preprocessing_method}): '{full_text}' (Conf: {avg_confidence:.2f}%) - {total_time:.3f}s (preproc: {preproc_time:.3f}s, OCR: {ocr_time:.3f}s)")
-
-            return full_text, avg_confidence, f"paddle_{preprocessing_method}", total_time
+            print(f"PaddleOCR ({preprocessing_method}): No JD codes found - {total_time:.3f}s")
+            return None, 0, f"paddle_{preprocessing_method}_no_jd", total_time
 
         except Exception as e:
             total_time = time.time() - start_time
@@ -290,7 +434,7 @@ class OCRProcessor:
         """Recognize text using multiple OCR engines with multiple preprocessing strategies"""
         total_start_time = time.time()
         all_results = []
-        preprocessing_methods = [None, "standard", "enhanced", "inverse", "adaptive", "printed"]
+        preprocessing_methods = [None, "standard", "enhanced", "inverse", "adaptive", "printed", "jd_format"]
 
         print("\n===== RUNNING ALL OCR ENGINES =====")
 
@@ -354,7 +498,8 @@ class OCRProcessor:
 
         # Strategy 1: Select result with highest confidence
         best_by_confidence = max(all_results, key=lambda x: x[1])
-        print(f"\nBest by confidence: '{best_by_confidence[0]}' ({best_by_confidence[2]}) - {best_by_confidence[1]:.2f}%")
+        print(
+            f"\nBest by confidence: '{best_by_confidence[0]}' ({best_by_confidence[2]}) - {best_by_confidence[1]:.2f}%")
 
         # Strategy 2: Find most common text across all OCR engines
         texts = [r[0] for r in all_results]
