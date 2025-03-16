@@ -5,7 +5,7 @@ import os
 
 class Camera:
     def __init__(self, camera_index=0):
-        # camera index 1 = laptop webcam, 0 = external webcam
+        # camera index 0 = laptop webcam, 1 = external webcam
         self.camera_index = camera_index
         self.cap = None
         self.width = 1920

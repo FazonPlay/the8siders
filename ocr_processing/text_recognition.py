@@ -5,7 +5,6 @@ import time
 import difflib
 from PIL import Image
 
-# Try to import OCR engines
 try:
     import easyocr
 
@@ -30,6 +29,14 @@ try:
 except ImportError:
     PADDLE_AVAILABLE = False
     print("PaddleOCR not available")
+
+try:
+    from mmocr import MMOCR
+
+    MMOCR_AVAILABLE = True
+except ImportError:
+    MMOCR_AVAILABLE = False
+    print("MMOCR not available")
 
 
 class OCRProcessor:
@@ -101,8 +108,79 @@ class OCRProcessor:
             sharpened = cv2.filter2D(enhanced, -1, kernel)
             _, binary = cv2.threshold(sharpened, 150, 255, cv2.THRESH_BINARY)
             return binary
+        elif method == "metal_curved":
+            img = cv2.resize(img, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            clahe = cv2.createCLAHE(clipLimit=3.5, tileGridSize=(4, 4))
+            enhanced = clahe.apply(gray)
+            _, mask = cv2.threshold(enhanced, 220, 255, cv2.THRESH_BINARY)
+            mask = cv2.dilate(mask, np.ones((5, 5), np.uint8))
+            enhanced_no_glare = cv2.inpaint(enhanced, mask, 5, cv2.INPAINT_TELEA)
+            kernel_sharpen = np.array([[-1, -1, -1],
+                                       [-1, 9, -1],
+                                       [-1, -1, -1]])
+            sharpened = cv2.filter2D(enhanced_no_glare, -1, kernel_sharpen)
+            _, binary = cv2.threshold(sharpened, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+            return binary
         else:
             return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    def rectify_curved_text(self, image):
+        """Attempts to 'flatten' curved text areas"""
+        img = image.copy()
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+        # Find connected components
+        ret, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        # Filter to keep only potential text areas
+        text_regions = []
+        for cnt in contours:
+            x, y, w, h = cv2.boundingRect(cnt)
+            if 5 < h < 50 and w > h:  # Basic text region filtering
+                text_regions.append((x, y, w, h))
+
+        # Process each text region with a sliding window
+        result_img = img.copy()
+        text_mask = np.zeros_like(gray)
+
+        for x, y, w, h in text_regions:
+            roi = gray[y:y + h, x:x + w]
+            # Enhance contrast in this region
+            roi = cv2.equalizeHist(roi)
+            # Copy back to result image
+            text_mask[y:y + h, x:x + w] = 255
+
+        # Apply the mask to original image
+        result = cv2.bitwise_and(img, img, mask=text_mask)
+        return result
+
+    def post_process_results(self, text):
+        """Apply regex patterns to extract and validate JD codes"""
+        import re
+
+        # Clean up the text
+        text = text.replace('\n', ' ').replace('\r', ' ')
+
+        # Look for JD codes with common patterns
+        jd_patterns = [
+            r'JD\s*[R|DZ]\d{6,}',  # JD followed by R or DZ and 6+ digits
+            r'JD\s*\d{6,}',  # JD followed by 6+ digits
+            r'[JI][D0O]\s*[R|DZ]?\d{6,}'  # Common OCR errors J/I, D/0/O
+        ]
+
+        for pattern in jd_patterns:
+            match = re.search(pattern, text)
+            if match:
+                result = match.group(0)
+                # Clean up common OCR errors
+                result = result.replace('I0', 'JD').replace('ID', 'JD')
+                result = result.replace('J0', 'JD').replace('JO', 'JD')
+                return result
+
+        return text  # Return original if no pattern matched
 
     def recognize_with_easyocr(self, image, preprocessing_method=None):
         """Recognize text using EasyOCR with optional preprocessing"""
@@ -256,33 +334,40 @@ class OCRProcessor:
             return None, 0, f"paddle_{preprocessing_method}_error", time.time() - start_time
 
     def recognize_text(self, image):
-        """Recognize text using multiple OCR engines with multiple preprocessing strategies"""
+        """Enhanced recognize_text method with curved text support"""
         total_start_time = time.time()
         all_results = []
-        preprocessing_methods = [None, "standard", "enhanced", "inverse", "adaptive", "printed", "jd_format"]
 
-        # Run all available engines with all preprocessing methods
-        for method in preprocessing_methods:
-            method_name = method if method else "default"
-            print(f"Trying preprocessing method: {method_name}")
+        # Add metal-specific method to preprocessing methods
+        preprocessing_methods = [None, "standard", "enhanced", "inverse",
+                                 "adaptive", "printed", "jd_format", "metal_curved"]
 
-            if EASYOCR_AVAILABLE:
-                result = self.recognize_with_easyocr(image, method)
-                if result[0]:
-                    print(f"✓ EasyOCR with {method_name}: {result[0]} ({result[1]:.1f}%)")
-                    all_results.append(result[:3])
+        # Try rectification first
+        rectified_image = self.rectify_curved_text(image)
 
-            if TESSERACT_AVAILABLE:
-                result = self.recognize_with_tesseract(image, method)
-                if result[0]:
-                    print(f"✓ Tesseract with {method_name}: {result[0]} ({result[1]:.1f}%)")
-                    all_results.append(result[:3])
+        # Run normal processing on both original and rectified images
+        for img in [image, rectified_image]:
+            for method in preprocessing_methods:
+                method_name = method if method else "default"
+                print(f"Trying preprocessing method: {method_name}")
 
-            if PADDLE_AVAILABLE:
-                result = self.recognize_with_paddleocr(image, method)
-                if result[0]:
-                    print(f"✓ PaddleOCR with {method_name}: {result[0]} ({result[1]:.1f}%)")
-                    all_results.append(result[:3])
+                if EASYOCR_AVAILABLE:
+                    result = self.recognize_with_easyocr(img, method)
+                    if result[0]:
+                        print(f"✓ EasyOCR with {method_name}: {result[0]} ({result[1]:.1f}%)")
+                        all_results.append(result[:3])
+
+                if TESSERACT_AVAILABLE:
+                    result = self.recognize_with_tesseract(img, method)
+                    if result[0]:
+                        print(f"✓ Tesseract with {method_name}: {result[0]} ({result[1]:.1f}%)")
+                        all_results.append(result[:3])
+
+                if PADDLE_AVAILABLE:
+                    result = self.recognize_with_paddleocr(img, method)
+                    if result[0]:
+                        print(f"✓ PaddleOCR with {method_name}: {result[0]} ({result[1]:.1f}%)")
+                        all_results.append(result[:3])
 
         print(f"Total valid results: {len(all_results)}")
         print(f"Processing time: {time.time() - total_start_time:.3f}s")
@@ -290,7 +375,7 @@ class OCRProcessor:
         if not all_results:
             return "No text detected", 0, "no_valid_results"
 
-        # Strategy 1: Select result with highest confidence
+        # Strategy 1: Select result with the highest confidence
         best_by_confidence = max(all_results, key=lambda x: x[1])
 
         # Strategy 2: Find most common text across all OCR engines
@@ -340,13 +425,19 @@ class OCRProcessor:
 
             # If more than one engine agrees, this is our best result
             if most_votes >= 2:
-                return best_engine_agreement
+                best_result = best_engine_agreement
+                return self.post_process_results(best_result[0]), best_result[1], best_result[2]
 
         # Between consistent results and highest confidence, prefer consistency
         if len(largest_group) > 2:
-            return best_in_group
+            best_result = best_in_group
         else:
-            return best_by_confidence
+            best_result = best_by_confidence
+
+        # Apply post-processing to extract JD code if present
+        processed_text = self.post_process_results(best_result[0])
+
+        return processed_text, best_result[1], best_result[2]
 
     def save_result(self, text, confidence, method, image_path=None, output_dir="results"):
         """Save OCR result to a file"""
