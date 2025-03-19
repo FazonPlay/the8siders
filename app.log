@@ -1,0 +1,103 @@
+2025-03-19 15:43:18,485 - INFO - Starting application
+2025-03-19 15:43:18,496 - INFO - Initializing camera
+2025-03-19 15:43:18,496 - INFO - Initializing OCR processor
+2025-03-19 15:43:18,497 - WARNING - Neither CUDA nor MPS are available - defaulting to CPU. Note: This module is much faster with a GPU.
+2025-03-19 15:43:20,363 - INFO - Creating GUI
+2025-03-19 15:43:20,371 - ERROR - Fatal error: 'CameraOCRGUI' object has no attribute 'init_ui'
+Traceback (most recent call last):
+  File "C:\Coding\John-Deer\the8siders\main.py", line 42, in main
+    gui = CameraOCRGUI(camera, ocr_processor)
+  File "C:\Coding\John-Deer\the8siders\GUI.py", line 19, in __init__
+    self.init_ui()
+AttributeError: 'CameraOCRGUI' object has no attribute 'init_ui'
+2025-03-19 15:48:35,576 - INFO - Starting application
+2025-03-19 15:48:35,588 - INFO - Initializing camera
+2025-03-19 15:48:35,588 - INFO - Initializing OCR processor
+2025-03-19 15:48:35,588 - WARNING - Neither CUDA nor MPS are available - defaulting to CPU. Note: This module is much faster with a GPU.
+2025-03-19 15:48:37,457 - INFO - Creating GUI
+2025-03-19 15:48:38,774 - INFO - Camera started successfully
+2025-03-19 15:48:38,949 - INFO - Application ready
+2025-03-19 15:52:56,568 - INFO - Starting application
+2025-03-19 15:52:56,579 - INFO - Initializing camera
+2025-03-19 15:52:57,696 - INFO - Initializing OCR processor
+2025-03-19 15:52:57,697 - WARNING - Neither CUDA nor MPS are available - defaulting to CPU. Note: This module is much faster with a GPU.
+2025-03-19 15:52:59,598 - INFO - Creating GUI
+2025-03-19 15:52:59,605 - INFO - Camera started successfully
+2025-03-19 15:52:59,784 - INFO - Application ready
+2025-03-19 15:57:23,162 - INFO - Processed frame: No text detected (0.00%)
+2025-03-19 16:25:43,025 - INFO - Starting application
+2025-03-19 16:25:43,035 - INFO - Initializing camera
+2025-03-19 16:25:44,348 - INFO - Initializing OCR processor
+2025-03-19 16:25:44,349 - WARNING - Neither CUDA nor MPS are available - defaulting to CPU. Note: This module is much faster with a GPU.
+2025-03-19 16:25:46,265 - INFO - Creating GUI
+2025-03-19 16:25:46,272 - INFO - Camera started successfully
+2025-03-19 16:25:46,461 - INFO - Application ready
+2025-03-19 16:49:17,485 - INFO - Starting application
+2025-03-19 16:49:17,496 - INFO - Initializing components
+2025-03-19 16:49:17,496 - WARNING - Neither CUDA nor MPS are available - defaulting to CPU. Note: This module is much faster with a GPU.
+2025-03-19 16:49:19,369 - INFO - Creating GUI
+2025-03-19 16:49:19,588 - INFO - Application ready
+2025-03-19 16:49:23,842 - INFO - Camera started successfully
+2025-03-19 16:49:26,560 - INFO - Camera started successfully
+2025-03-19 16:52:43,086 - INFO - Starting application
+2025-03-19 16:52:43,099 - INFO - Initializing components
+2025-03-19 16:52:43,099 - WARNING - Neither CUDA nor MPS are available - defaulting to CPU. Note: This module is much faster with a GPU.
+2025-03-19 16:52:45,121 - INFO - Creating GUI
+2025-03-19 16:52:45,312 - INFO - Application ready
+2025-03-19 16:53:02,413 - ERROR - Camera error: Failed to initialize camera
+2025-03-19 17:07:51,379 - INFO - Starting application
+2025-03-19 17:07:51,390 - INFO - Initializing components
+2025-03-19 17:07:51,390 - WARNING - Neither CUDA nor MPS are available - defaulting to CPU. Note: This module is much faster with a GPU.
+2025-03-19 17:07:53,261 - INFO - Creating GUI
+2025-03-19 17:07:53,446 - INFO - Application ready
+2025-03-19 18:03:37,182 - INFO - Application closed cleanly
+2025-03-19 18:03:54,260 - INFO - Starting application
+2025-03-19 18:03:54,271 - INFO - Initializing components
+2025-03-19 18:03:54,272 - WARNING - Neither CUDA nor MPS are available - defaulting to CPU. Note: This module is much faster with a GPU.
+2025-03-19 18:03:56,167 - INFO - Creating GUI
+2025-03-19 18:03:56,398 - INFO - Application ready
+2025-03-19 18:17:54,222 - INFO - Starting application
+2025-03-19 18:17:54,233 - INFO - Initializing components
+2025-03-19 18:17:54,234 - WARNING - Neither CUDA nor MPS are available - defaulting to CPU. Note: This module is much faster with a GPU.
+2025-03-19 18:17:56,157 - INFO - Creating GUI
+2025-03-19 18:17:56,382 - INFO - Application ready
+2025-03-19 18:19:13,437 - INFO - Starting application
+2025-03-19 18:19:13,447 - INFO - Initializing components
+2025-03-19 18:19:13,448 - WARNING - Neither CUDA nor MPS are available - defaulting to CPU. Note: This module is much faster with a GPU.
+2025-03-19 18:19:15,333 - INFO - Creating GUI
+2025-03-19 18:19:15,522 - INFO - Application ready
+2025-03-19 18:19:20,416 - INFO - Camera started successfully
+2025-03-19 18:19:52,215 - INFO - Processed frame: No JD code detected (0.00%)
+2025-03-19 18:20:22,256 - INFO - Processed frame: No JD code detected (0.00%)
+2025-03-19 18:32:24,066 - INFO - Starting application
+2025-03-19 18:32:24,077 - INFO - Initializing components
+2025-03-19 18:32:24,077 - WARNING - Neither CUDA nor MPS are available - defaulting to CPU. Note: This module is much faster with a GPU.
+2025-03-19 18:32:25,956 - INFO - Creating GUI
+2025-03-19 18:32:26,146 - INFO - Application ready
+2025-03-19 18:32:28,506 - INFO - Application closed cleanly
+2025-03-19 18:42:52,199 - INFO - Starting application
+2025-03-19 18:42:52,209 - INFO - Initializing components
+2025-03-19 18:42:52,210 - WARNING - Neither CUDA nor MPS are available - defaulting to CPU. Note: This module is much faster with a GPU.
+2025-03-19 18:42:54,121 - INFO - Creating GUI
+2025-03-19 18:42:54,310 - INFO - Application ready
+2025-03-19 18:43:09,735 - INFO - Camera started successfully
+2025-03-19 18:43:48,519 - INFO - Processed frame: No JD code detected (0.00%)
+2025-03-19 18:48:10,482 - INFO - Starting application
+2025-03-19 18:48:10,494 - INFO - Initializing components
+2025-03-19 18:48:10,495 - WARNING - Neither CUDA nor MPS are available - defaulting to CPU. Note: This module is much faster with a GPU.
+2025-03-19 18:48:12,378 - INFO - Creating GUI
+2025-03-19 18:48:12,568 - INFO - Application ready
+2025-03-19 18:56:47,992 - INFO - Starting application
+2025-03-19 18:56:48,003 - INFO - Initializing components
+2025-03-19 18:56:48,004 - WARNING - Neither CUDA nor MPS are available - defaulting to CPU. Note: This module is much faster with a GPU.
+2025-03-19 18:56:49,876 - INFO - Creating GUI
+2025-03-19 18:56:50,057 - INFO - Application ready
+2025-03-19 18:58:25,403 - INFO - Processed image: JD detected but couldn't extract full code (40.00%)
+2025-03-19 18:58:41,658 - INFO - Camera started successfully
+2025-03-19 18:59:13,176 - INFO - Processed frame: No JD code detected (0.00%)
+2025-03-19 18:59:58,920 - INFO - Starting application
+2025-03-19 18:59:58,931 - INFO - Initializing components
+2025-03-19 18:59:58,931 - WARNING - Neither CUDA nor MPS are available - defaulting to CPU. Note: This module is much faster with a GPU.
+2025-03-19 19:00:00,830 - INFO - Creating GUI
+2025-03-19 19:00:01,021 - INFO - Application ready
+2025-03-19 19:00:04,532 - INFO - Application closed cleanly

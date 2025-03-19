@@ -25,51 +25,72 @@ class Camera:
         return available_cameras
 
     def initialize(self):
-        # Try DirectShow backend on Windows
-        self.cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
+        """Initialize the camera with better error handling"""
+        try:
+            # Release any existing capture
+            if self.cap is not None:
+                self.cap.release()
+                self.cap = None
 
-        if not self.cap.isOpened():
-            self.cap = cv2.VideoCapture(self.camera_index)  # Try default backend
+            # Try DirectShow backend first
+            self.cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
 
-        if not self.cap.isOpened():
-            raise Exception(f"Could not open camera device at index {self.camera_index}")
+            if not self.cap.isOpened():
+                # Try default backend
+                self.cap = cv2.VideoCapture(self.camera_index)
 
-        # Try to set resolution, with fallbacks
-        resolutions = [(1920, 1080), (1280, 720), (800, 600), (640, 480)]
+            if not self.cap.isOpened():
+                return False
 
-        for width, height in resolutions:
-            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+            # Set camera properties
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+            self.cap.set(cv2.CAP_PROP_AUTOFOCUS, 1)
 
-            # Read a test frame to see if the resolution worked
+            # Verify camera is working with a test capture
             ret, frame = self.cap.read()
-            if ret and frame is not None:
-                self.width = width
-                self.height = height
-                break
+            if not ret or frame is None:
+                self.cap.release()
+                self.cap = None
+                return False
 
-        # Set autofocus
-        self.cap.set(cv2.CAP_PROP_AUTOFOCUS, 1)
+            return True
+
+        except Exception as e:
+            if self.cap is not None:
+                self.cap.release()
+                self.cap = None
+            raise Exception(f"Camera initialization failed: {str(e)}")
 
     def capture_image(self, save_path=None):
         if self.cap is None or not self.cap.isOpened():
             self.initialize()
 
-        # Allow camera to adjust to lighting
-        for _ in range(5):  # Discard first few frames
-            ret, _ = self.cap.read()
+        # Clear buffer
+        for _ in range(5):
+            self.cap.grab()
+
+        frames = []
+        # Capture multiple frames to select the sharpest
+        for _ in range(10):
+            ret, frame = self.cap.read()
+            if ret and frame is not None:
+                frames.append(frame)
             time.sleep(0.1)
 
-        ret, frame = self.cap.read()
-
-        if not ret or frame is None:
+        if not frames:
             return None
 
-        if save_path:
-            os.makedirs(os.path.dirname(save_path), exist_ok=True)
-            cv2.imwrite(save_path, frame)
+        # Select sharpest frame
+        best_frame = max(frames, key=lambda f: cv2.Laplacian(cv2.cvtColor(f, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var())
 
-        return frame
+        if save_path:
+            # Save with maximum quality
+            params = [cv2.IMWRITE_JPEG_QUALITY, 100]
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            cv2.imwrite(save_path, best_frame, params)
+
+        return best_frame
 
     def capture_multiple(self, num_images=3, delay=0.5, save_dir="test_images"):
         os.makedirs(save_dir, exist_ok=True)
