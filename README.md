@@ -33,7 +33,7 @@ If you want to use the laptop camera (or the default camera) you have to apply t
 ```
     def __init__(self, camera_index=0):
 ```
-replace the 0 with 1 if you want an external camera
+replace the 0 with 1 if you want an external camera (or wireless phone camera)
 
 # Notes 
 Avoid installing the CUDA version of PyTorch that caused the issues
@@ -44,3 +44,6 @@ I suggest y'all read the code as there are a LOT of stuff that have been done si
 
 Also, please check the main.py file as you can uncomment the method of scanning you want,
 you can either choose to capture 3 images live or you can import an image from the system.
+
+
+
