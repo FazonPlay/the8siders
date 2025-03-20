@@ -5,8 +5,8 @@ import io
 import sys  # Add this import
 import logging
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-                            QPushButton, QLabel, QTextEdit, QSplitter, QMessageBox,
-                            QFileDialog, QStackedWidget, QGridLayout, QScrollArea, QApplication)
+                             QPushButton, QLabel, QTextEdit, QSplitter, QMessageBox,
+                             QFileDialog, QStackedWidget, QGridLayout, QScrollArea, QApplication, QProgressDialog)
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QImage, QPixmap
 
@@ -37,263 +37,237 @@ class ConsoleCapture(io.StringIO):
     def flush(self):
         self.original_stdout.flush()
 
+
 class CameraOCRGUI(QMainWindow):
     def __init__(self, camera, ocr_processor):
         super().__init__()
         self.camera = camera
         self.ocr_processor = ocr_processor
-        self.preview_timer = QTimer()
-        self.process_timer = QTimer()
-        self.is_processing = False
-        self.camera_active = False
         self.current_image = None
         self.batch_images = []
-        self.init_ui()
-        self.setup_logging()
+        self.processing_queue = []
+        self.current_image_index = 0
 
-    def setup_logging(self):
-        """Set up logging to QTextEdit"""
-        log_handler = QTextEditLogger(self.log_text)
-        logging.getLogger().addHandler(log_handler)
+        # Window setup
+        self.setWindowTitle("OCR Image Processor")
+        self.setMinimumSize(1200, 800)
+        self.setStyleSheet("""
+            QMainWindow {
+                background-color: #f0f0f0;
+            }
+            QPushButton {
+                background-color: #2196F3;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                min-width: 100px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #1976D2;
+            }
+            QPushButton:disabled {
+                background-color: #BDBDBD;
+            }
+            QLabel {
+                font-size: 12px;
+                color: #333;
+            }
+            QTextEdit {
+                border: 1px solid #BDBDBD;
+                border-radius: 4px;
+                padding: 4px;
+                background-color: white;
+            }
+        """)
 
-    def init_ui(self):
-        """Initialize the user interface"""
-        # Get screen geometry
-        screen = QApplication.primaryScreen().geometry()
-        self.setGeometry(0, 0, screen.width(), screen.height())
-        self.setWindowState(Qt.WindowMaximized)
-        self.setWindowTitle('OCR System')
+        # Create central widget and main layout
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        main_layout = QHBoxLayout(central_widget)
 
-        # Create main widget and layout
-        main_widget = QWidget()
-        self.setCentralWidget(main_widget)
-        main_layout = QVBoxLayout(main_widget)
-        main_layout.setContentsMargins(10, 10, 10, 10)
-        main_layout.setSpacing(10)
-
-        # Create top panel
-        top_panel = QWidget()
-        top_layout = QHBoxLayout(top_panel)
-        main_layout.addWidget(top_panel)
-
-        # Mode selection buttons
-        self.camera_button = QPushButton('Camera Mode')
-        self.camera_button.clicked.connect(self.toggle_camera_mode)
-        top_layout.addWidget(self.camera_button)
-
-        self.file_button = QPushButton('Load Single Image')
-        self.file_button.clicked.connect(self.load_image)
-        top_layout.addWidget(self.file_button)
-
-        self.batch_button = QPushButton('Capture Batch')
-        self.batch_button.clicked.connect(self.start_batch_capture)
-        self.batch_button.setEnabled(False)
-        top_layout.addWidget(self.batch_button)
-
-        # Create splitter
-        splitter = QSplitter(Qt.Horizontal)
-        main_layout.addWidget(splitter)
-
-        # Left panel
+        # Create left panel (controls and results)
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
-        splitter.addWidget(left_panel)
+        left_panel.setMaximumWidth(400)
 
-        # Main preview
-        self.preview_label = QLabel()
-        preview_width = int(screen.width() * 0.5)
-        preview_height = int(screen.height() * 0.5)
-        self.preview_label.setMinimumSize(preview_width, preview_height)
-        self.preview_label.setAlignment(Qt.AlignCenter)
-        self.preview_label.setStyleSheet("border: 2px solid gray;")
-        left_layout.addWidget(self.preview_label)
+        # Button panel
+        button_panel = QWidget()
+        button_layout = QGridLayout(button_panel)
 
-        # Batch images grid
-        self.batch_grid = QGridLayout()
-        self.batch_labels = []
-        batch_width = int(screen.width() * 0.2)
-        batch_height = int(screen.height() * 0.2)
-        for i in range(3):
-            label = QLabel()
-            label.setMinimumSize(batch_width, batch_height)
-            label.setStyleSheet("border: 1px solid gray;")
-            label.setAlignment(Qt.AlignCenter)
-            self.batch_labels.append(label)
-            self.batch_grid.addWidget(label, 0, i)
+        # Create and style buttons
+        self.camera_button = QPushButton("Take Photo")
+        self.batch_button = QPushButton("Take Batch (3)")
+        self.load_button = QPushButton("Load Image")
+        self.process_button = QPushButton("Process")
+        self.prev_button = QPushButton("Previous")
+        self.next_button = QPushButton("Next")
 
-        batch_widget = QWidget()
-        batch_widget.setLayout(self.batch_grid)
-        left_layout.addWidget(batch_widget)
+        # Add buttons to grid
+        button_layout.addWidget(self.camera_button, 0, 0)
+        button_layout.addWidget(self.batch_button, 0, 1)
+        button_layout.addWidget(self.load_button, 1, 0)
+        button_layout.addWidget(self.process_button, 1, 1)
+        button_layout.addWidget(self.prev_button, 2, 0)
+        button_layout.addWidget(self.next_button, 2, 1)
 
-        # Camera info
-        self.info_text = QTextEdit()
-        self.info_text.setMaximumHeight(100)
-        self.info_text.setReadOnly(True)
-        left_layout.addWidget(self.info_text)
-
-        # Right panel
-        right_panel = QWidget()
-        right_layout = QVBoxLayout(right_panel)
-        splitter.addWidget(right_panel)
-
-        # Process buttons
-        buttons_panel = QWidget()
-        buttons_layout = QHBoxLayout(buttons_panel)
-
-        self.process_button = QPushButton('Process Single')
-        self.process_button.clicked.connect(self.process_current_image)
-        self.process_button.setEnabled(False)
-        buttons_layout.addWidget(self.process_button)
-
-        self.process_batch_button = QPushButton('Process Batch')
-        self.process_batch_button.clicked.connect(self.process_batch)
-        self.process_batch_button.setEnabled(False)
-        buttons_layout.addWidget(self.process_batch_button)
-
-        right_layout.addWidget(buttons_panel)
-
-        # Log display
-        right_layout.addWidget(QLabel("Application Log:"))
-        self.log_text = QTextEdit()
-        self.log_text.setReadOnly(True)
-        self.log_text.setMaximumHeight(150)
-        right_layout.addWidget(self.log_text)
-
-        # OCR Results
-        right_layout.addWidget(QLabel("OCR Results:"))
+        # Results and logging area
+        results_label = QLabel("Results:")
         self.results_text = QTextEdit()
         self.results_text.setReadOnly(True)
-        right_layout.addWidget(self.results_text)
 
-        # Set up timers
-        self.preview_timer.timeout.connect(self.update_preview)
-        self.process_timer.timeout.connect(self.process_frame)
+        log_label = QLabel("Application Log:")
+        self.log_text = QTextEdit()
+        self.log_text.setReadOnly(True)
 
-        # Update preview label size based on screen
-        preview_width = int(screen.width() * 0.5)  # 50% of screen width
-        preview_height = int(screen.height() * 0.5)  # 50% of screen height
-        self.preview_label.setMinimumSize(preview_width, preview_height)
+        # Add widgets to left panel
+        left_layout.addWidget(button_panel)
+        left_layout.addWidget(results_label)
+        left_layout.addWidget(self.results_text)
+        left_layout.addWidget(log_label)
+        left_layout.addWidget(self.log_text)
 
-        # Update batch image preview sizes
-        batch_width = int(screen.width() * 0.2)  # 20% of screen width
-        batch_height = int(screen.height() * 0.2)  # 20% of screen height
-        for label in self.batch_labels:
-            label.setMinimumSize(batch_width, batch_height)
+        # Create right panel (image display)
+        right_panel = QWidget()
+        right_layout = QVBoxLayout(right_panel)
 
-    def toggle_camera_mode(self):
-        """Toggle between camera mode and image mode"""
-        if not self.camera_active:
-            try:
-                if self.camera.initialize():
-                    self.camera_active = True
-                    self.camera_button.setText('Stop Camera')
-                    self.file_button.setEnabled(False)
-                    self.batch_button.setEnabled(True)
-                    self.process_button.setEnabled(False)
-                    self.start_camera()
-                else:
-                    raise Exception("Failed to initialize camera")
-            except Exception as e:
-                logging.error(f"Camera error: {str(e)}")
-                QMessageBox.critical(self, "Error", f"Camera error: {str(e)}")
-        else:
-            self.stop_camera()
-            self.camera_button.setText('Camera Mode')
-            self.file_button.setEnabled(True)
-            self.batch_button.setEnabled(False)
-            self.preview_label.clear()
-            self.info_text.clear()
-            self.camera_active = False
+        # Image display label
+        self.image_label = QLabel()
+        self.image_label.setAlignment(Qt.AlignCenter)
+        self.image_label.setMinimumSize(640, 480)
+        self.image_label.setStyleSheet("""
+            QLabel {
+                background-color: #333;
+                border: 2px solid #BDBDBD;
+                border-radius: 4px;
+            }
+        """)
 
-    def start_batch_capture(self):
-        """Start capturing batch of 3 images"""
-        self.batch_images = []
+        # Add image label to scroll area
+        scroll_area = QScrollArea()
+        scroll_area.setWidget(self.image_label)
+        scroll_area.setWidgetResizable(True)
+        right_layout.addWidget(scroll_area)
+
+        # Add panels to main layout
+        main_layout.addWidget(left_panel)
+        main_layout.addWidget(right_panel, stretch=1)
+
+        # Connect button signals
+        self.camera_button.clicked.connect(self.capture_single_image)
+        self.batch_button.clicked.connect(self.capture_batch_images)
+        self.load_button.clicked.connect(self.load_image)
+        self.process_button.clicked.connect(self.process_current_image)
+        self.prev_button.clicked.connect(self.show_previous_image)
+        self.next_button.clicked.connect(self.show_next_image)
+
+        # Initialize button states
+        self.update_button_states()
+
+    def capture_single_image(self):
+        """Capture a single image from camera"""
         self.results_text.clear()
-        self.process_batch_button.setEnabled(False)
-
         try:
-            images, _ = self.camera.capture_multiple(num_images=3, delay=1.0)
-            self.batch_images = images
-
-            # Display captured images in grid
-            for i, image in enumerate(images):
-                if image is not None:
-                    rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-                    h, w, ch = rgb_image.shape
-                    bytes_per_line = ch * w
-                    qt_image = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format_RGB888)
-                    scaled_pixmap = QPixmap.fromImage(qt_image).scaled(
-                        self.batch_labels[i].size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                    self.batch_labels[i].setPixmap(scaled_pixmap)
-
-            self.process_batch_button.setEnabled(True)
-            self.log_text.append("Captured 3 images successfully")
-
+            image, _ = self.camera.capture_single()
+            if image is not None:
+                self.current_image = image
+                self.batch_images = [image]
+                self.current_image_index = 0
+                self.display_current_image()
+                self.results_text.append("Image captured successfully")
+                self.update_button_states()
         except Exception as e:
-            logging.error(f"Batch capture error: {str(e)}")
-            self.log_text.append(f"Error during capture: {str(e)}")
+            self.results_text.append(f"Error capturing image: {str(e)}")
+            logging.error(f"Camera error: {str(e)}")
 
-    def process_batch(self):
-        """Process all images in the batch"""
-        if not self.batch_images:
-            return
-
+    def capture_batch_images(self):
+        """Capture multiple images in sequence"""
+        self.results_text.clear()
         try:
-            self.results_text.clear()
-            self.results_text.append("Processing batch of images...\n")
-
-            for i, image in enumerate(self.batch_images):
-                self.results_text.append(f"\nProcessing image {i + 1}/3:")
-                text, confidence, method = self.ocr_processor.recognize_text(image)
-
-                result_text = f"Image {i + 1} Results:\n"
-                result_text += f"Detected Text: {text}\n"
-                result_text += f"Confidence: {confidence:.2f}%\n"
-                result_text += f"Method: {method}\n"
-                result_text += "-" * 40 + "\n"
-
-                self.results_text.append(result_text)
-
-            self.results_text.append("\nBatch processing complete!")
-
+            images, _ = self.camera.capture_multiple(num_images=3)
+            if images:
+                self.batch_images = images
+                self.current_image = images[0]
+                self.current_image_index = 0
+                self.display_current_image()
+                self.results_text.append(f"Captured {len(images)} images")
+                self.update_button_states()
         except Exception as e:
-            logging.error(f"Batch processing error: {str(e)}")
-            self.results_text.append(f"Error during processing: {str(e)}")
+            self.results_text.append(f"Error capturing batch: {str(e)}")
+            logging.error(f"Camera error: {str(e)}")
 
     def load_image(self):
-        """Load and display an image file"""
+        """Load image from file"""
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "Open Image", "", "Image Files (*.png *.jpg *.jpeg *.bmp)")
+            self, "Open Image", "", "Images (*.png *.jpg *.jpeg *.bmp *.tiff)")
 
         if file_path:
             try:
-                # Load and store image
-                self.current_image = cv2.imread(file_path)
-                if self.current_image is None:
-                    raise Exception("Failed to load image")
-
-                # Convert for display
-                rgb_image = cv2.cvtColor(self.current_image, cv2.COLOR_BGR2RGB)
-                h, w, ch = rgb_image.shape
-                bytes_per_line = ch * w
-                image = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format_RGB888)
-                scaled_pixmap = QPixmap.fromImage(image).scaled(
-                    self.preview_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-
-                # Update UI
-                self.preview_label.setPixmap(scaled_pixmap)
-                self.process_button.setEnabled(True)
-                self.info_text.setText(f"Loaded image: {os.path.basename(file_path)}\n"
-                                     f"Resolution: {w}x{h}")
-                self.results_text.clear()
-
+                image = cv2.imread(file_path)
+                if image is not None:
+                    self.current_image = image
+                    self.batch_images = [image]
+                    self.current_image_index = 0
+                    self.display_current_image()
+                    self.results_text.append(f"Loaded image: {file_path}")
+                    self.update_button_states()
+                else:
+                    raise ValueError("Failed to load image")
             except Exception as e:
-                logging.error(f"File loading error: {str(e)}")
-                QMessageBox.critical(self, "Error", f"Failed to load image: {str(e)}")
+                self.results_text.append(f"Error loading image: {str(e)}")
+                logging.error(f"Image loading error: {str(e)}")
+
+    def display_current_image(self):
+        """Display the current image in the GUI"""
+        if self.current_image is not None:
+            # Convert image for display
+            height, width = self.current_image.shape[:2]
+            bytes_per_line = 3 * width
+            image = cv2.cvtColor(self.current_image, cv2.COLOR_BGR2RGB)
+            q_img = QImage(image.data, width, height, bytes_per_line, QImage.Format_RGB888)
+
+            # Scale image to fit label while maintaining aspect ratio
+            scaled_pixmap = QPixmap.fromImage(q_img).scaled(
+                self.image_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+
+            self.image_label.setPixmap(scaled_pixmap)
+
+    def show_previous_image(self):
+        """Show previous image in batch"""
+        if self.current_image_index > 0:
+            self.current_image_index -= 1
+            self.current_image = self.batch_images[self.current_image_index]
+            self.display_current_image()
+            self.update_button_states()
+
+    def show_next_image(self):
+        """Show next image in batch"""
+        if self.current_image_index < len(self.batch_images) - 1:
+            self.current_image_index += 1
+            self.current_image = self.batch_images[self.current_image_index]
+            self.display_current_image()
+            self.update_button_states()
+
+    def update_button_states(self):
+        """Update button states based on current context"""
+        has_image = self.current_image is not None
+        self.process_button.setEnabled(has_image)
+        self.prev_button.setEnabled(self.current_image_index > 0)
+        self.next_button.setEnabled(self.current_image_index < len(self.batch_images) - 1)
+
+    def show_processing_dialog(self):
+        """Show a progress dialog during processing"""
+        dialog = QProgressDialog("Processing image...", None, 0, 0, self)
+        dialog.setWindowTitle("Processing")
+        dialog.setWindowModality(Qt.WindowModal)
+        dialog.setMinimumDuration(0)
+        dialog.setValue(0)
+        return dialog
 
     def process_current_image(self):
-        """Process the currently loaded image"""
-        if not self.current_image is None:
+        """Process the currently displayed image"""
+        if self.current_image is not None:
             try:
                 self.process_button.setEnabled(False)
                 self.results_text.append("Processing image...")
@@ -312,19 +286,14 @@ class CameraOCRGUI(QMainWindow):
                 result_text = f"Detected Text: {text}\n"
                 result_text += f"Confidence: {confidence:.2f}%\n"
                 result_text += f"Method: {method}\n"
-                result_text += f"\nHistory:\n"
+                self.results_text.append(result_text)
 
-                self.add_history_to_results(result_text)
                 logging.info(f"Processed image: {text} ({confidence:.2f}%)")
 
             except Exception as e:
                 logging.error(f"Processing error: {str(e)}")
                 self.results_text.append(f"Error: {str(e)}")
             finally:
-                # Ensure stdout/stderr are restored
-                if 'console_capture' in locals():
-                    sys.stdout = console_capture.original_stdout
-                    sys.stderr = console_capture.original_stderr
                 self.process_button.setEnabled(True)
 
     def process_batch(self):

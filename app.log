@@ -101,3 +101,61 @@ AttributeError: 'CameraOCRGUI' object has no attribute 'init_ui'
 2025-03-19 19:00:00,830 - INFO - Creating GUI
 2025-03-19 19:00:01,021 - INFO - Application ready
 2025-03-19 19:00:04,532 - INFO - Application closed cleanly
+2025-03-19 19:00:10,969 - INFO - Starting application
+2025-03-19 19:00:10,980 - INFO - Initializing components
+2025-03-19 19:00:10,981 - WARNING - Neither CUDA nor MPS are available - defaulting to CPU. Note: This module is much faster with a GPU.
+2025-03-19 19:00:12,893 - INFO - Creating GUI
+2025-03-19 19:00:13,076 - INFO - Application ready
+2025-03-19 19:00:20,304 - INFO - Camera started successfully
+2025-03-19 19:03:08,544 - INFO - Processed frame: No text detected (0.00%)
+2025-03-19 19:06:14,102 - INFO - Processed frame: No text detected (0.00%)
+2025-03-20 10:11:32,129 - INFO - Starting application
+2025-03-20 10:11:32,172 - INFO - Initializing components
+2025-03-20 10:11:32,172 - INFO - Initializing components
+2025-03-20 10:11:32,173 - WARNING - Neither CUDA nor MPS are available - defaulting to CPU. Note: This module is much faster with a GPU.
+2025-03-20 10:11:34,322 - INFO - Creating GUI
+2025-03-20 10:11:34,322 - INFO - Creating GUI
+2025-03-20 10:11:34,645 - INFO - Application ready
+2025-03-20 10:11:34,649 - INFO - Application ready
+2025-03-20 10:14:49,208 - INFO - Application closed cleanly
+2025-03-20 10:15:32,513 - INFO - Processed image: JD 2 R5427 (65.48%)
+2025-03-20 10:16:41,638 - INFO - Application closed cleanly
+2025-03-20 12:51:28,642 - INFO - Starting application
+2025-03-20 12:51:28,675 - INFO - Initializing components
+2025-03-20 12:51:28,676 - WARNING - Neither CUDA nor MPS are available - defaulting to CPU. Note: This module is much faster with a GPU.
+2025-03-20 12:51:30,608 - INFO - Creating GUI
+2025-03-20 12:51:30,938 - INFO - Application ready
+2025-03-20 12:51:39,839 - ERROR - Camera error: 'Camera' object has no attribute 'capture_single'
+2025-03-20 12:54:09,111 - INFO - Starting application
+2025-03-20 12:54:09,122 - INFO - Initializing components
+2025-03-20 12:54:09,123 - WARNING - Neither CUDA nor MPS are available - defaulting to CPU. Note: This module is much faster with a GPU.
+2025-03-20 12:54:10,986 - INFO - Creating GUI
+2025-03-20 12:54:11,176 - INFO - Application ready
+2025-03-20 13:37:38,975 - INFO - Starting application
+2025-03-20 13:37:38,991 - INFO - Initializing components
+2025-03-20 13:37:38,992 - WARNING - Neither CUDA nor MPS are available - defaulting to CPU. Note: This module is much faster with a GPU.
+2025-03-20 13:37:41,125 - INFO - Creating GUI
+2025-03-20 13:37:41,415 - INFO - Application ready
+2025-03-20 13:44:11,148 - INFO - Starting application
+2025-03-20 13:44:11,164 - INFO - Initializing components
+2025-03-20 13:44:11,165 - WARNING - Neither CUDA nor MPS are available - defaulting to CPU. Note: This module is much faster with a GPU.
+2025-03-20 13:44:13,330 - INFO - Creating GUI
+2025-03-20 13:44:13,616 - INFO - Application ready
+2025-03-20 13:49:02,286 - INFO - Processed image: JD 2 R5427 (65.48%)
+2025-03-20 13:56:15,815 - INFO - Starting application
+2025-03-20 13:56:15,830 - INFO - Initializing components
+2025-03-20 13:56:15,831 - WARNING - Neither CUDA nor MPS are available - defaulting to CPU. Note: This module is much faster with a GPU.
+2025-03-20 13:56:18,039 - INFO - Creating GUI
+2025-03-20 13:56:18,348 - INFO - Application ready
+2025-03-20 14:00:08,245 - ERROR - Error during cleanup: 'CameraOCRGUI' object has no attribute 'preview_timer'
+2025-03-20 14:02:37,655 - INFO - Starting application
+2025-03-20 14:02:37,670 - INFO - Initializing components
+2025-03-20 14:02:37,671 - WARNING - Neither CUDA nor MPS are available - defaulting to CPU. Note: This module is much faster with a GPU.
+2025-03-20 14:02:40,229 - INFO - Creating GUI
+2025-03-20 14:02:40,588 - INFO - Application ready
+2025-03-20 14:05:01,992 - ERROR - Error during cleanup: 'CameraOCRGUI' object has no attribute 'preview_timer'
+2025-03-20 14:19:27,996 - INFO - Starting application
+2025-03-20 14:19:28,012 - INFO - Initializing components
+2025-03-20 14:19:28,013 - WARNING - Neither CUDA nor MPS are available - defaulting to CPU. Note: This module is much faster with a GPU.
+2025-03-20 14:19:30,878 - INFO - Creating GUI
+2025-03-20 14:19:31,219 - INFO - Application ready
