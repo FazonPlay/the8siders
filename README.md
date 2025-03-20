@@ -1,6 +1,19 @@
 # AT LAST, THERE IS A GODDAMN README FILE
+- As of the 13th commit on 20/03 you also need to install PyQt5:
+  Windows:
+    pip install "PyQt5>=5.15.2"
 
+  Linux:
+      pip install "PyQt5>=5.15.2"
+  
+    Install additional system packages:
+      sudo apt-get install python3-pyqt5
+      sudo apt-get install python3-pyqt5.qtwebengine
 
+  Mac:
+   1. Install PyQt5 using Homebrew:
+   ```bash
+     brew install pyqt@5
 
 
 - As of the 9th commit on the 16/03 here are the dependencies needed:
