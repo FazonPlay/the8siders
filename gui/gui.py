@@ -54,6 +54,7 @@ class CameraOCRGUI(QMainWindow):
         self.setStyleSheet("""
             QMainWindow {
                 background-color: #f0f0f0;
+                font-color: #000;
             }
             QPushButton {
                 background-color: #2196F3;
@@ -79,6 +80,7 @@ class CameraOCRGUI(QMainWindow):
                 border-radius: 4px;
                 padding: 4px;
                 background-color: white;
+                color: black;
             }
         """)
 

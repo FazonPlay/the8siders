@@ -159,3 +159,16 @@ AttributeError: 'CameraOCRGUI' object has no attribute 'init_ui'
 2025-03-20 14:19:28,013 - WARNING - Neither CUDA nor MPS are available - defaulting to CPU. Note: This module is much faster with a GPU.
 2025-03-20 14:19:30,878 - INFO - Creating GUI
 2025-03-20 14:19:31,219 - INFO - Application ready
+2025-03-20 16:03:55,815 - INFO - Starting application
+2025-03-20 16:03:55,825 - INFO - Initializing components
+2025-03-20 16:03:55,826 - WARNING - Neither CUDA nor MPS are available - defaulting to CPU. Note: This module is much faster with a GPU.
+2025-03-20 16:03:57,736 - INFO - Creating GUI
+2025-03-20 16:03:57,934 - INFO - Application ready
+2025-03-20 16:07:55,959 - INFO - Processed image: JD 2 R5427 (65.48%)
+2025-03-20 16:27:01,194 - ERROR - Error during cleanup: 'CameraOCRGUI' object has no attribute 'preview_timer'
+2025-03-20 16:33:17,507 - INFO - Starting application
+2025-03-20 16:33:17,532 - INFO - Initializing components
+2025-03-20 16:33:17,533 - WARNING - Neither CUDA nor MPS are available - defaulting to CPU. Note: This module is much faster with a GPU.
+2025-03-20 16:33:19,881 - INFO - Creating GUI
+2025-03-20 16:33:20,176 - INFO - Application ready
+2025-03-20 16:33:35,192 - ERROR - Error during cleanup: 'CameraOCRGUI' object has no attribute 'preview_timer'

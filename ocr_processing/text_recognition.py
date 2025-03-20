@@ -111,53 +111,55 @@ class OCRProcessor:
         return result
 
     def post_process_results(self, text):
-        """Improved post-processing with specific character corrections"""
+        """Improved post-processing with specific R/DZ pattern checks"""
         if not text:
             return text
 
         # Clean up the text
-        text = text.strip()
+        text = text.strip().upper()
         text = re.sub(r'\s+', ' ', text)
 
-        # Convert to uppercase (as per requirement - no lowercase letters)
-        text = text.upper()
+        # Basic JD corrections
+        text = text.replace('J0', 'JD').replace('ID', 'JD')
+        text = text.replace('IO', 'JD').replace('JO', 'JD')
 
-        # Remove any non-alphanumeric characters except spaces
-        text = re.sub(r'[^A-Z0-9 ]', '', text)
+        # Special DZ corrections
+        text = text.replace('0Z', 'DZ')  # Fix common 0/D confusion
+        text = text.replace('02', 'DZ')  # Fix common 2/Z confusion
+        text = text.replace('D2', 'DZ')
 
-        # JD prefix corrections
-        text = text.replace('I0', 'JD').replace('ID', 'JD')
-        text = text.replace('J0', 'JD').replace('JO', 'JD')
+        # Extract JD pattern with improved R/DZ detection
+        jd_pattern = r'JD\s*([RD])'  # Look for JD followed by R or D
+        match = re.search(jd_pattern, text)
 
-        # Specific character corrections
-        if '6' in text and '5' not in text:
-            text = text.replace('6', '5')
+        if match:
+            start_pos = match.start()
+            end_pos = match.end()
+            next_char = match.group(1)  # R or D
 
-        # Check for patterns at the end (likely A vs 4/1 confusion)
-        if re.search(r'[41]$', text):
-            # If ends with 4 or 1, check if it should be A
-            text = text[:-1] + 'A'
+            if next_char == 'D':
+                # Check for DZ pattern
+                if len(text) > end_pos and text[end_pos] in ['Z', '2', '0']:
+                    # Replace with correct DZ
+                    text = text[:end_pos] + 'Z' + text[end_pos + 1:]
 
-        # Check for expected JD format with more specific patterns
-        jd_patterns = [
-            r'JD\s*[R|DZ]\d{6,}',  # JD followed by R or DZ and 6+ digits
-            r'JD\s*\d{6,}',  # JD followed by 6+ digits
-            r'[JI][D0O]\s*[R|DZ]?\d{6,}'  # Common OCR errors J/I, D/0/O
-        ]
-
-        for pattern in jd_patterns:
-            match = re.search(pattern, text)
-            if match:
-                correct_code = match.group(0)
-                # Clean up common OCR errors
-                correct_code = correct_code.replace('I0', 'JD').replace('ID', 'JD')
-                correct_code = correct_code.replace('J0', 'JD').replace('JO', 'JD')
-
-                # Ensure proper spacing
-                if 'JD' in correct_code and not re.match(r'JD\s', correct_code):
-                    correct_code = re.sub(r'JD', 'JD ', correct_code)
-
-                return correct_code
+            # Extract numbers after R or DZ
+            if next_char == 'R':
+                num_pattern = r'JD\s*R(\d{4,7})'
+                num_match = re.search(num_pattern, text)
+                if num_match:
+                    numbers = num_match.group(1)
+                    # Validate number format
+                    if len(numbers) in [4, 5, 6, 7]:
+                        return f"JD R{numbers}"
+            else:
+                num_pattern = r'JD\s*DZ(\d{4,7})'
+                num_match = re.search(num_pattern, text)
+                if num_match:
+                    numbers = num_match.group(1)
+                    # Validate number format
+                    if len(numbers) in [4, 5, 6, 7]:
+                        return f"JD DZ{numbers}"
 
         return text
 
