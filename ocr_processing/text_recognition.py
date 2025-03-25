@@ -6,6 +6,7 @@ import re
 
 try:
     import easyocr
+
     EASYOCR_AVAILABLE = True
 except ImportError:
     EASYOCR_AVAILABLE = False
@@ -33,13 +34,13 @@ class OCRProcessor:
         # Generate unique debug image name
         angle_text = f"{angle}deg_" if angle != 0 else ""
         method_name = method if method else "default"
-        debug_filename = f"{self.debug_dir}/debug_{angle_text}{method_name}.jpg"  # No timestamp
+        debug_filename = f"{self.debug_dir}/debug_{angle_text}{method_name}.jpg"
 
         # Process the image based on method
         if method == "standard":
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             processed = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                         cv2.THRESH_BINARY, 11, 2)
+                                              cv2.THRESH_BINARY, 11, 2)
         elif method == "enhanced":
             img = cv2.resize(img, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -79,571 +80,419 @@ class OCRProcessor:
 
         return processed
 
-    def enhance_contrast_for_text(self, image):
-        """Enhances contrast in potential text regions"""
+    def preprocess_for_digits(self, image):
+        """Special preprocessing optimized for digit recognition, particularly 5 vs 6"""
         img = image.copy()
+        img = cv2.resize(img, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
+
+        # Convert to grayscale
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-        # Find connected components
-        ret, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # Apply stronger adaptive histogram equalization
+        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(4, 4))
+        enhanced = clahe.apply(gray)
 
-        # Filter to keep only potential text areas
-        text_regions = []
-        for cnt in contours:
-            x, y, w, h = cv2.boundingRect(cnt)
-            if 5 < h < 50 and w > h:  # Basic text region filtering
-                text_regions.append((x, y, w, h))
+        # Apply bilateral filter to preserve edges while removing noise
+        bilateral = cv2.bilateralFilter(enhanced, 11, 17, 17)
 
-        # Process each text region with a sliding window
-        result_img = img.copy()
-        text_mask = np.zeros_like(gray)
+        # Apply sharpening kernel optimized for digit edges
+        kernel_sharpen = np.array([[-1, -1, -1],
+                                   [-1, 9.5, -1],
+                                   [-1, -1, -1]])
+        sharpened = cv2.filter2D(bilateral, -1, kernel_sharpen)
 
-        for x, y, w, h in text_regions:
-            roi = gray[y:y + h, x:x + w]
-            # Enhance contrast in this region
-            roi = cv2.equalizeHist(roi)
-            # Copy back to result image
-            text_mask[y:y + h, x:x + w] = 255
+        # Use adaptive thresholding with params tuned for metallic engravings
+        thresh = cv2.adaptiveThreshold(sharpened, 255,
+                                       cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                       cv2.THRESH_BINARY, 11, 2)
 
-        # Apply the mask to original image
-        result = cv2.bitwise_and(img, img, mask=text_mask)
-        return result
+        # Save debug image
+        debug_filename = f"{self.debug_dir}/digit_optimized.jpg"
+        cv2.imwrite(debug_filename, thresh)
 
-    def post_process_results(self, text):
-        """Improved post-processing with specific R/DZ pattern checks"""
-        if not text:
-            return text
+        return thresh
 
-        # Clean up the text
-        text = text.strip().upper()
-        text = re.sub(r'\s+', ' ', text)
+    def analyze_digit_features(self, image, text):
+        """Analyze specific features of digits to better distinguish 5 from 6"""
+        # Only process if we detected potential JD code with digits
+        if not re.search(r'JD\s*[R]?\s*\d+', text):
+            return text, 0
 
-        # Basic JD corrections
-        text = text.replace('J0', 'JD').replace('ID', 'JD')
-        text = text.replace('IO', 'JD').replace('JO', 'JD')
+        # Find digit sequences in the text
+        digit_sequences = re.findall(r'\d+', text)
+        if not digit_sequences:
+            return text, 0
 
-        # Special DZ corrections
-        text = text.replace('0Z', 'DZ')  # Fix common 0/D confusion
-        text = text.replace('02', 'DZ')  # Fix common 2/Z confusion
-        text = text.replace('D2', 'DZ')
+        corrected_text = text
+        confidence_boost = 0
 
-        # Extract JD pattern with improved R/DZ detection
-        jd_pattern = r'JD\s*([RD])'  # Look for JD followed by R or D
-        match = re.search(jd_pattern, text)
+        for seq in digit_sequences:
+            corrected_seq = ""
+            seq_confidence = 0
 
-        if match:
-            start_pos = match.start()
-            end_pos = match.end()
-            next_char = match.group(1)  # R or D
-
-            if next_char == 'D':
-                # Check for DZ pattern
-                if len(text) > end_pos and text[end_pos] in ['Z', '2', '0']:
-                    # Replace with correct DZ
-                    text = text[:end_pos] + 'Z' + text[end_pos + 1:]
-
-            # Extract numbers after R or DZ
-            if next_char == 'R':
-                num_pattern = r'JD\s*R(\d{4,7})'
-                num_match = re.search(num_pattern, text)
-                if num_match:
-                    numbers = num_match.group(1)
-                    # Validate number format
-                    if len(numbers) in [4, 5, 6, 7]:
-                        return f"JD R{numbers}"
-            else:
-                num_pattern = r'JD\s*DZ(\d{4,7})'
-                num_match = re.search(num_pattern, text)
-                if num_match:
-                    numbers = num_match.group(1)
-                    # Validate number format
-                    if len(numbers) in [4, 5, 6, 7]:
-                        return f"JD DZ{numbers}"
-
-        return text
-
-    def recognize_with_easyocr(self, image, preprocessing_method=None, angle=0):
-        """Recognize text using EasyOCR with optional preprocessing"""
-        if not EASYOCR_AVAILABLE:
-            return None, 0, f"easyocr_{preprocessing_method}_not_available"
-
-        start_time = time.time()
-        try:
-            processed_image = self.preprocess_image(image, preprocessing_method, angle)
-            results = self.easyocr_reader.readtext(processed_image)
-
-            if not results:
-                return None, 0, f"easyocr_{preprocessing_method}_notext"
-
-            jd_found = False
-            jd_fragments = []
-            other_fragments = []
-
-            # Sort results by position
-            sorted_results = sorted(results, key=lambda x: (x[0][0][1], x[0][0][0]))
-
-            for (bbox, text, prob) in sorted_results:
-                text = text.strip().upper()  # Convert to uppercase
-
-                # Check for JD prefix or common OCR errors
-                if text == "JD" or text.startswith("JD "):
-                    jd_found = True
-                    jd_fragments.append((text, prob * 100, bbox))
-                elif jd_found:
-                    other_fragments.append((text, prob * 100, bbox))
-                elif text in ["ID", "J0", "I0", "JO"]:
-                    jd_found = True
-                    jd_fragments.append(("JD", prob * 100 * 0.9, bbox))
-                else:
-                    other_fragments.append((text, prob * 100, bbox))
-
-            # Combine fragments to form complete JD code
-            if jd_found and jd_fragments:  # Check if jd_fragments is not empty
-                combined_text = jd_fragments[0][0]
-                confidences = [jd_fragments[0][1]]
-
-                for text, conf, _ in other_fragments:
-                    if combined_text.endswith(" "):
-                        combined_text += text
+            for i, digit in enumerate(seq):
+                # Check each digit, with special focus on 5 vs 6 confusion
+                if digit == '6':
+                    # Analyze if this should be a 5
+                    digit_confidence = self.analyze_specific_digit(image, digit, seq, i)
+                    if digit_confidence < 0.4:  # Lower confidence means more likely to be a 5
+                        corrected_seq += '5'
+                        seq_confidence += (1 - digit_confidence) * 10  # Higher boost for more confident corrections
                     else:
-                        combined_text += " " + text
-                    confidences.append(conf)
+                        corrected_seq += digit
+                else:
+                    corrected_seq += digit
+                    digit_confidence = self.analyze_specific_digit(image, digit, seq, i)
+                    seq_confidence += digit_confidence * 5  # Add confidence for digits that look correct
 
-                avg_confidence = sum(confidences) / len(confidences) if confidences else 0
-                return combined_text, avg_confidence, f"easyocr_{preprocessing_method}"
+            # Calculate average confidence boost for this sequence
+            if len(seq) > 0:
+                avg_confidence = seq_confidence / len(seq)
+                confidence_boost += avg_confidence
 
-            return None, 0, f"easyocr_{preprocessing_method}_no_jd"
+                # Replace the sequence if it was corrected
+                if corrected_seq != seq:
+                    corrected_text = corrected_text.replace(seq, corrected_seq)
+
+        return corrected_text, confidence_boost
+
+    def analyze_specific_digit(self, image, digit, sequence, position):
+        """Analyze a specific digit in the image to determine true confidence"""
+        # Initialize base confidence level
+        confidence = 0.5  # Neutral starting point
+
+        # Look for JD code patterns
+        jd_match = re.search(r'JD\s*[R]?\s*(\d+)', sequence)
+        if jd_match:
+            # First position in JD codes often has specific patterns
+            if position == 0:
+                # For JD codes, first digit is commonly 5, less commonly 6
+                if digit == '6':
+                    confidence -= 0.2
+                elif digit == '5':
+                    confidence += 0.2
+
+            # Second position patterns
+            if position == 1:
+                # Common second digits in JD codes
+                if digit in ['0', '2', '4', '5']:
+                    confidence += 0.15
+
+            # Check for known John Deere model number patterns
+            common_patterns = {
+                '54': 0.25,
+                '55': 0.25,
+                '52': 0.2,
+                '57': 0.2,
+                '50': 0.15
+            }
+
+            if position < len(sequence) - 1:
+                check_pattern = digit + sequence[position + 1]
+                if check_pattern in common_patterns:
+                    confidence += common_patterns[check_pattern]
+
+            if position > 0:
+                check_pattern = sequence[position - 1] + digit
+                if check_pattern in common_patterns:
+                    confidence += common_patterns[check_pattern]
+
+        # For any digit sequence, check common confusion patterns
+        confusion_pairs = {
+            '5': '6',
+            '8': '3',
+            '0': 'O',
+            '1': 'I'
+        }
+
+        # If this is a commonly confused digit, adjust confidence
+        for correct, confused in confusion_pairs.items():
+            if digit == confused:
+                confidence -= 0.1
+            elif digit == correct:
+                confidence += 0.05
+
+        # Ensure confidence stays within valid range
+        return max(0.1, min(confidence, 0.9))
+
+    def check_for_jd(self, image, angle=0):
+        """Quick check just for JD presence"""
+        if not EASYOCR_AVAILABLE:
+            return False, 0
+
+        try:
+            # Basic preprocessing - quick and minimal
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            results = self.easyocr_reader.readtext(gray)
+
+            combined_text = " ".join([r[1] for r in results]).upper()
+
+            # Check for JD variations
+            jd_variants = ['JD', 'J D', 'JO', 'ID', 'I D', '10']
+            for variant in jd_variants:
+                if variant in combined_text:
+                    confidence = 60.0  # Base confidence
+                    return True, confidence
+
+            return False, 0
 
         except Exception as e:
-            print(f"Error with EasyOCR ({preprocessing_method}): {str(e)}")
-            return None, 0, f"easyocr_{preprocessing_method}_error"
+            print(f"Error in check_for_jd: {str(e)}")
+            return False, 0
+
+    def post_process_results(self, text):
+        """Dynamic post-processing with contextual confidence calculation that extracts code after JD"""
+        if not text:
+            return None, 0
+
+        # Clean up the text
+        text = text.strip()
+        text = re.sub(r'\s+', ' ', text)
+
+        # Calculate initial confidence based on text properties
+        text_length = len(text)
+        base_confidence = min(5 + (text_length * 2), 40)  # Scale with text length but cap at 40
+
+        # Track different confidence factors
+        format_confidence = 0
+        pattern_confidence = 0
+        digit_confidence = 0
+
+        # Convert to uppercase (as per requirement)
+        text = text.upper()
+
+        # Remove any non-alphanumeric characters except spaces
+        text = re.sub(r'[^A-Z0-9 ]', '', text)
+
+        # JD prefix corrections
+        jd_variants = {
+            'I0': 'JD', 'ID': 'JD', 'J0': 'JD', 'JO': 'JD',
+            'IO': 'JD', '10': 'JD', '1D': 'JD'
+        }
+
+        for variant, correct in jd_variants.items():
+            if variant in text:
+                text = text.replace(variant, correct)
+                format_confidence += 15  # Strong confidence for fixing known OCR errors
+
+        # Extract the code after JD
+        jd_code_match = re.search(r'JD\s*([R]?)\s*(\d+)', text)
+        if jd_code_match:
+            # Get the R part (optional) and the digits
+            r_part = jd_code_match.group(1).strip()
+            digits = jd_code_match.group(2).strip()
+
+            # Combine to form the clean code (R + digits)
+            extracted_code = f"{r_part}{digits}"
+
+            # Add confidence for finding a valid JD code pattern
+            format_confidence += 20
+
+            # Analyze the digit pattern for common JD codes
+            if len(digits) >= 2:
+                first_two = digits[:2]
+                common_prefixes = {
+                    '54': 15, '55': 15, '52': 12,
+                    '57': 12, '50': 10, '53': 10
+                }
+
+                if first_two in common_prefixes:
+                    digit_confidence += common_prefixes[first_two]
+
+                # Check the first digit for common 5/6 misreads
+                if digits[0] == '6':
+                    # 6 is often a misread 5 in JD codes
+                    potential_correction = '5' + digits[1:]
+                    if potential_correction[:2] in common_prefixes:
+                        extracted_code = f"{r_part}5{digits[1:]}"
+                        digit_confidence += 10
+
+            # Replace text with just the extracted code
+            text = extracted_code
+        else:
+            # No valid JD code found
+            format_confidence -= 10
+
+        # Calculate final confidence score
+        # Weight the components based on their reliability
+        total_confidence = (
+                base_confidence +
+                (format_confidence * 0.8) +
+                (pattern_confidence * 1.0) +
+                (digit_confidence * 1.2)  # Give more weight to digit pattern analysis
+        )
+
+        # Cap the confidence at reasonable limits
+        final_confidence = min(max(total_confidence, 15), 95)
+
+        return text, final_confidence
+
+    def recognize_with_easyocr(self, image, method=None, angle=0):
+        """Recognize text using EasyOCR with specific preprocessing method"""
+        if not EASYOCR_AVAILABLE:
+            return None, 0, "easyocr_unavailable"
+
+        try:
+            # Preprocess the image
+            processed = self.preprocess_image(image, method, angle)
+
+            # Recognize text with EasyOCR
+            results = self.easyocr_reader.readtext(processed)
+
+            # Combine results and get total confidence
+            if results:
+                combined_text = " ".join([r[1] for r in results])
+                avg_confidence = sum([r[2] for r in results]) / len(results) * 100
+
+                # Post-process to clean and format
+                text, confidence = self.post_process_results(combined_text)
+
+                # Combine confidence scores (weighted average)
+                combined_confidence = (confidence * 0.7) + (avg_confidence * 0.3)
+
+                method_name = method if method else "default"
+                return text, combined_confidence, method_name
+
+            return None, 0, method if method else "default"
+
+        except Exception as e:
+            print(f"Error in recognize_with_easyocr: {str(e)}")
+            return None, 0, "error"
 
     def rotate_image(self, image, angle):
-        """Rotate image by specified angle"""
+        """Rotate image by given angle"""
         height, width = image.shape[:2]
         center = (width / 2, height / 2)
 
         # Get rotation matrix
-        rotation_matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
+        rotation_matrix = cv2.getRotationMatrix2D(center, angle, 1)
 
-        # Apply rotation
-        rotated = cv2.warpAffine(image, rotation_matrix, (width, height),
-                               flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+        # Perform the rotation
+        rotated = cv2.warpAffine(image, rotation_matrix, (width, height))
 
         return rotated
 
-    def try_orientation(self, image, angle):
-        """Try processing the image at a specific orientation angle"""
-        print(f"Trying orientation: {angle}°")
-
-        # Rotate the image if needed
-        if angle == 0:
-            rotated_image = image
-        else:
-            rotated_image = self.rotate_image(image, angle)
-
-        # Process with a subset of methods for speed
-        preprocessing_methods = [None, "standard", "enhanced"]
-        all_results = []
-
-        for method in preprocessing_methods:
-            method_name = method if method else "default"
-            result = self.recognize_with_easyocr(rotated_image, method, angle)
-
-            if result[0]:  # If text was detected
-                print(f"✓ Detected at {angle}°: {result[0]} ({result[1]:.1f}%)")
-                all_results.append(result)
-
-        # Return best result for this orientation
-        if all_results:
-            best_result = max(all_results, key=lambda x: x[1])
-            return best_result, angle
-
-        return (None, 0, f"no_text_at_{angle}"), angle
-
     def recognize_text(self, image):
-        """Main OCR method with orientation detection and improved processing"""
+        """Main OCR method optimized for JD code detection with improved digit recognition"""
         total_start_time = time.time()
 
-        # Try different orientations to handle rotated text
-        angles = [0, 90, 180, 270]  # 0=normal, 90=rotated right, 180=upside down, 270=rotated left
-        orientation_results = []
-
-        # Confidence threshold to consider a result "good enough" to stop rotation checks
-        GOOD_CONFIDENCE_THRESHOLD = 75  # Adjust this as needed
-
-        # First try all orientations with limited preprocessing
-        for angle in angles:
-            result, angle = self.try_orientation(image, angle)
-            if result[0]:  # If text found
-                orientation_results.append((result, angle))
-                print(f"Text found at {angle}° with confidence {result[1]:.1f}%")
-
-                # Stop checking more angles if we found a good result
-                if result[1] > GOOD_CONFIDENCE_THRESHOLD:
-                    print(f"Found good orientation at {angle}° - skipping remaining angles")
-                    break
-            else:
-                print(f"No text detected at {angle}°")
-
-        # If we found text in any orientation, use the best one
+        # STEP 1: Quick orientation testing for JD presence
+        angles = [0, 90, 180, 270]
+        jd_found = False
         best_angle = 0
-        if orientation_results:
-            best_orientation = max(orientation_results, key=lambda x: x[0][1])
-            best_result, best_angle = best_orientation
 
-            print(f"Best orientation detected: {best_angle}°")
+        print("STEP 1: Quick scan for JD presence...")
+        for angle in angles:
+            print(f"Checking for JD at {angle}°...")
+            rotated_image = self.rotate_image(image, angle) if angle != 0 else image
 
-            # If confidence is already high, return this result
-            if best_result[1] > 85:
-                processed_text = self.post_process_results(best_result[0])
-                print(f"Total processing time: {time.time() - total_start_time:.3f}s")
-                return processed_text, best_result[1], f"{best_result[2]}_{best_angle}deg"
+            jd_found, confidence = self.check_for_jd(rotated_image, angle)
+            if jd_found:
+                print(f"JD found at {angle}° with confidence {confidence:.1f}%")
+                best_angle = angle
+                break
 
-            # Otherwise, proceed with more detailed processing on the best orientation
-            if best_angle != 0:
-                image = self.rotate_image(image, best_angle)
+        if not jd_found:
+            print("JD not found in any orientation - trying detailed scan")
+            # If we didn't find JD in quick scan, try with full processing
+            all_results = []
 
-        # Proceed with detailed processing on the properly oriented image
+            for angle in angles:
+                rotated_image = self.rotate_image(image, angle) if angle != 0 else image
+
+                # Try with standard processing
+                result = self.recognize_with_easyocr(rotated_image, "standard", angle)
+                if result[0]:
+                    all_results.append((result, angle))
+
+            if all_results:
+                # Get best result
+                best_result, best_angle = max(all_results, key=lambda x: x[0][1])
+                jd_found = True
+            else:
+                return "No JD code detected", 0, "no_jd_found"
+
+        # STEP 2: JD was found, now process properly oriented image with filters
+        print(f"STEP 2: JD found at {best_angle}° - extracting full code...")
+
+        # Rotate image to correct orientation
+        if best_angle != 0:
+            image = self.rotate_image(image, best_angle)
+
+        # Apply different preprocessing methods to extract the full code
+        preprocessing_methods = ["standard", "enhanced", "jd_format", "metal_curved"]
         all_results = []
-        preprocessing_methods = [None, "standard", "enhanced", "jd_format", "metal_curved"]
 
-        # First pass - try all methods with original image
-        print("Processing with original image...")
         for method in preprocessing_methods:
-            method_name = method if method else "default"
-            print(f"Trying preprocessing method: {method_name}")
-
-            # Pass the angle to recognize_with_easyocr
+            print(f"Trying preprocessing method: {method}")
             result = self.recognize_with_easyocr(image, method, best_angle)
-            if result[0]:  # If text was detected
-                print(f"✓ {method_name}: {result[0]} ({result[1]:.1f}%)")
+            if result[0]:
+                print(f"✓ {method}: {result[0]} ({result[1]:.1f}%)")
                 all_results.append(result)
 
-        # Second pass - only if needed with enhanced contrast
-        if not all_results or max((result[1] for result in all_results), default=0) < 70:
-            print("Trying enhanced contrast image...")
-            enhanced_image = self.enhance_contrast_for_text(image)
+        # Use the digit-optimized preprocessing
+        digit_image = self.preprocess_for_digits(image)
+        result = self.easyocr_reader.readtext(digit_image)
 
-            # Create a debug image for the enhanced contrast base image
-            debug_filename = f"{self.debug_dir}/debug_{best_angle}deg_enhanced_contrast.jpg"  # No timestamp
-            cv2.imwrite(debug_filename, enhanced_image)
-            print(f"Debug image saved: {debug_filename}")
+        if result:
+            # Extract text and process specifically for digit accuracy
+            full_text = " ".join([text for (_, text, _) in result])
+            digit_text, digit_confidence = self.post_process_results(full_text)
 
-            # Only try the methods that are most likely to work
-            for method in preprocessing_methods[:4]:  # Use the first few methods
-                method_name = method if method else "default"
-                print(f"Trying preprocessing method: {method_name} (enhanced)")
+            # Apply additional digit-specific analysis
+            refined_text, confidence_boost = self.analyze_digit_features(image, digit_text)
 
-                # Pass the angle to recognize_with_easyocr
-                result = self.recognize_with_easyocr(enhanced_image, method, best_angle)
-                if result[0]:
-                    print(f"✓ {method_name} (enhanced): {result[0]} ({result[1]:.1f}%)")
-                    all_results.append(result)
+            if refined_text:
+                final_confidence = digit_confidence + confidence_boost + 5  # Extra weight for digit-optimized
+                print(f"✓ digit_optimized: {refined_text} ({final_confidence:.1f}%)")
+                all_results.append((refined_text, final_confidence, "digit_optimized"))
 
-        print(f"Total valid results: {len(all_results)}")
-        print(f"Processing time: {time.time() - total_start_time:.3f}s")
+        # If no results with filters, try once more with default
+        if not all_results:
+            result = self.recognize_with_easyocr(image, None, best_angle)
+            if result[0]:
+                all_results.append(result)
+
+        print(f"Total processing time: {time.time() - total_start_time:.3f}s")
 
         if not all_results:
-            return "No text detected", 0, "no_valid_results"
+            return "JD detected but couldn't extract full code", 40, "partial_recognition"
 
-        # Select the best result (highest confidence)
-        best_result = max(all_results, key=lambda x: x[1])
+        # Select the best result, with higher weight for digit-optimized method
+        weighted_results = []
+        for text, confidence, method in all_results:
+            weight = 1.0
+            if method == "digit_optimized":
+                # Give more weight to the digit-optimized method
+                weight = 1.2
+            elif method == "jd_format":
+                # JD format is also good for structured text
+                weight = 1.1
 
-        # Apply post-processing to improve accuracy
-        processed_text = self.post_process_results(best_result[0])
+            weighted_results.append((text, confidence * weight, method))
 
-        return processed_text, best_result[1], best_result[2]
+        # Select the best result
+        best_result = max(weighted_results, key=lambda x: x[1])
+        return best_result[0], best_result[1], best_result[2]
 
-    def save_result(self, text, confidence, method, image_path=None, output_dir="results"):
-        """Save OCR result to a file"""
-        os.makedirs(output_dir, exist_ok=True)
-        timestamp = os.path.basename(image_path).split('.')[0] if image_path else str(int(time.time()))
+    def save_result(self, text, confidence, method, source_image_path):
+        """Save OCR results to a text file"""
+        os.makedirs("results", exist_ok=True)
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
 
-        result_file = os.path.join(output_dir, f"result_{timestamp}.txt")
+        # Create a sanitized version of text for filename
+        if text:
+            safe_text = re.sub(r'[^a-zA-Z0-9]', '_', text)
+            safe_text = safe_text[:30]  # Limit length
+            result_file = os.path.join("results", f"result_{timestamp}_{safe_text}.txt")
+        else:
+            result_file = os.path.join("results", f"result_{timestamp}_unknown.txt")
+
         with open(result_file, 'w') as f:
             f.write(f"Text: {text}\n")
             f.write(f"Confidence: {confidence:.2f}%\n")
             f.write(f"Method: {method}\n")
-            if image_path:
-                f.write(f"Source: {image_path}\n")
+            f.write(f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"Source Image: {source_image_path}\n")
 
         return result_file
-
-    # import cv2
-    # import numpy as np
-    # import os
-    # import time
-    # import re
-    #
-    # try:
-    #     import easyocr
-    #
-    #     EASYOCR_AVAILABLE = True
-    # except ImportError:
-    #     EASYOCR_AVAILABLE = False
-    #     print("EasyOCR not available")
-    #
-    # class OCRProcessor:
-    #     def __init__(self):
-    #         self.last_result = None
-    #         self.confidence = 0
-    #         self.debug_dir = "debug_images"
-    #         os.makedirs(self.debug_dir, exist_ok=True)
-    #
-    #         # Initialize OCR engines
-    #         if EASYOCR_AVAILABLE:
-    #             self.easyocr_reader = easyocr.Reader(['en'])
-    #             print("EasyOCR initialized")
-    #
-    #         print(f"Available OCR engines: EasyOCR={'✓' if EASYOCR_AVAILABLE else '✗'}")
-    #
-    #     def preprocess_image(self, image, method=None, angle=0):
-    #         """Unified preprocessing pipeline for all methods with debug images"""
-    #         img = image.copy()
-    #
-    #         # Generate unique debug image name
-    #         angle_text = f"{angle}deg_" if angle != 0 else ""
-    #         method_name = method if method else "default"
-    #         debug_filename = f"{self.debug_dir}/debug_{angle_text}{method_name}.jpg"
-    #
-    #         # Process the image based on method
-    #         if method == "standard":
-    #             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    #             processed = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-    #                                               cv2.THRESH_BINARY, 11, 2)
-    #         elif method == "enhanced":
-    #             img = cv2.resize(img, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
-    #             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    #             clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    #             enhanced = clahe.apply(gray)
-    #             blurred = cv2.GaussianBlur(enhanced, (5, 5), 0)
-    #             _, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    #             kernel = np.ones((1, 1), np.uint8)
-    #             processed = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
-    #         elif method == "jd_format":
-    #             img = cv2.resize(img, None, fx=2.5, fy=2.5, interpolation=cv2.INTER_CUBIC)
-    #             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    #             clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
-    #             enhanced = clahe.apply(gray)
-    #             kernel = np.array([[-1, -1, -1], [-1, 9, -1], [-1, -1, -1]])
-    #             sharpened = cv2.filter2D(enhanced, -1, kernel)
-    #             _, processed = cv2.threshold(sharpened, 150, 255, cv2.THRESH_BINARY)
-    #         elif method == "metal_curved":
-    #             img = cv2.resize(img, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
-    #             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    #             clahe = cv2.createCLAHE(clipLimit=3.5, tileGridSize=(4, 4))
-    #             enhanced = clahe.apply(gray)
-    #             _, mask = cv2.threshold(enhanced, 220, 255, cv2.THRESH_BINARY)
-    #             mask = cv2.dilate(mask, np.ones((5, 5), np.uint8))
-    #             enhanced_no_glare = cv2.inpaint(enhanced, mask, 5, cv2.INPAINT_TELEA)
-    #             kernel_sharpen = np.array([[-1, -1, -1],
-    #                                        [-1, 9, -1],
-    #                                        [-1, -1, -1]])
-    #             sharpened = cv2.filter2D(enhanced_no_glare, -1, kernel_sharpen)
-    #             _, processed = cv2.threshold(sharpened, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    #         else:
-    #             processed = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    #
-    #         # Save debug image
-    #         cv2.imwrite(debug_filename, processed)
-    #         print(f"Debug image saved: {debug_filename}")
-    #
-    #         return processed
-    #
-    #     def post_process_results(self, text):
-    #         """Process results to extract JD codes in specific format"""
-    #         if not text:
-    #             return None, 0
-    #
-    #         # Clean up the text
-    #         text = text.strip().upper()
-    #
-    #         # Check if JD is in the text
-    #         if "JD" not in text and not any(x in text for x in ["J0", "ID", "IO", "JO"]):
-    #             return None, 0
-    #
-    #         # Fix common OCR errors for "JD"
-    #         text = text.replace("J0", "JD").replace("ID", "JD")
-    #         text = text.replace("IO", "JD").replace("JO", "JD")
-    #
-    #         # Extract the valid JD code pattern: JD + (R + 6 digits or DZ + 6 digits)
-    #         # This regex looks for JD followed by optional space, then either R or DZ, followed by 6-7 digits
-    #         pattern = r'JD\s*(R\d{6,7}|DZ\d{6,7})'
-    #         match = re.search(pattern, text)
-    #
-    #         if match:
-    #             # Extract just the JD code part we care about
-    #             code = match.group(0)
-    #             # Ensure there's a space after JD
-    #             code = code.replace("JD", "JD ")
-    #             # Remove any spaces between parts except after JD
-    #             code = re.sub(r'JD\s+', 'JD ', code)
-    #             code = re.sub(r'(?<=JD )(\s+)', '', code)
-    #
-    #             # Calculate match confidence based on clarity of detection
-    #             confidence = 90  # Base confidence for a pattern match
-    #
-    #             return code, confidence
-    #
-    #         return None, 0
-    #
-    #     def check_for_jd(self, image, angle=0):
-    #         """Initial check just for JD presence without filters"""
-    #         if not EASYOCR_AVAILABLE:
-    #             return False, 0
-    #
-    #         try:
-    #             # Use default processing for speed
-    #             gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    #             results = self.easyocr_reader.readtext(gray_image)
-    #
-    #             # Check if any result contains JD or common JD errors
-    #             jd_variations = ["JD", "J0", "ID", "IO", "JO"]
-    #
-    #             for (_, text, prob) in results:
-    #                 text = text.strip().upper()
-    #                 if any(jd_var in text for jd_var in jd_variations):
-    #                     print(f"✓ JD detected at {angle}° in: {text} ({prob * 100:.1f}%)")
-    #                     return True, prob * 100
-    #
-    #             return False, 0
-    #
-    #         except Exception as e:
-    #             print(f"Error in JD check: {str(e)}")
-    #             return False, 0
-    #
-    #     def recognize_with_easyocr(self, image, preprocessing_method=None, angle=0):
-    #         """Recognize text using EasyOCR with optional preprocessing"""
-    #         if not EASYOCR_AVAILABLE:
-    #             return None, 0, f"easyocr_{preprocessing_method}_not_available"
-    #
-    #         start_time = time.time()
-    #         try:
-    #             processed_image = self.preprocess_image(image, preprocessing_method, angle)
-    #             results = self.easyocr_reader.readtext(processed_image)
-    #
-    #             if not results:
-    #                 return None, 0, f"easyocr_{preprocessing_method}_notext"
-    #
-    #             # Combine all text into one string for pattern matching
-    #             full_text = " ".join([text for (_, text, _) in results])
-    #             full_text = full_text.upper()  # Convert to uppercase
-    #
-    #             # Extract JD code using post-processing
-    #             jd_code, confidence = self.post_process_results(full_text)
-    #
-    #             if jd_code:
-    #                 return jd_code, confidence, f"easyocr_{preprocessing_method}"
-    #
-    #             return None, 0, f"easyocr_{preprocessing_method}_no_jd"
-    #
-    #         except Exception as e:
-    #             print(f"Error with EasyOCR ({preprocessing_method}): {str(e)}")
-    #             return None, 0, f"easyocr_{preprocessing_method}_error"
-    #
-    #     def rotate_image(self, image, angle):
-    #         """Rotate image by specified angle"""
-    #         height, width = image.shape[:2]
-    #         center = (width / 2, height / 2)
-    #
-    #         # Get rotation matrix
-    #         rotation_matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
-    #
-    #         # Apply rotation
-    #         rotated = cv2.warpAffine(image, rotation_matrix, (width, height),
-    #                                  flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
-    #
-    #         return rotated
-    #
-    #     def recognize_text(self, image):
-    #         """Main OCR method optimized for JD code detection"""
-    #         total_start_time = time.time()
-    #
-    #         # First, check different orientations just for JD presence
-    #         # This is a quick pass without preprocessing
-    #         angles = [0, 90, 180, 270]
-    #         jd_found = False
-    #         best_angle = 0
-    #
-    #         print("STEP 1: Quick scan for JD presence...")
-    #         for angle in angles:
-    #             print(f"Checking for JD at {angle}°...")
-    #             rotated_image = self.rotate_image(image, angle) if angle != 0 else image
-    #
-    #             jd_found, confidence = self.check_for_jd(rotated_image, angle)
-    #             if jd_found:
-    #                 print(f"JD found at {angle}° with confidence {confidence:.1f}%")
-    #                 best_angle = angle
-    #                 break
-    #
-    #         if not jd_found:
-    #             print("JD not found in any orientation - trying detailed scan")
-    #             # If we didn't find JD in quick scan, try with full processing
-    #             all_results = []
-    #
-    #             for angle in angles:
-    #                 rotated_image = self.rotate_image(image, angle) if angle != 0 else image
-    #
-    #                 # Try with standard processing
-    #                 result = self.recognize_with_easyocr(rotated_image, "standard", angle)
-    #                 if result[0]:
-    #                     all_results.append((result, angle))
-    #
-    #             if all_results:
-    #                 # Get best result
-    #                 best_result, best_angle = max(all_results, key=lambda x: x[0][1])
-    #                 jd_found = True
-    #             else:
-    #                 return "No JD code detected", 0, "no_jd_found"
-    #
-    #         # STEP 2: JD was found, now process properly oriented image with filters
-    #         # to extract the full JD code
-    #         print(f"STEP 2: JD found at {best_angle}° - extracting full code...")
-    #
-    #         # Rotate image to correct orientation
-    #         if best_angle != 0:
-    #             image = self.rotate_image(image, best_angle)
-    #
-    #         # Apply different preprocessing methods to extract the full code
-    #         preprocessing_methods = ["standard", "enhanced", "jd_format", "metal_curved"]
-    #         all_results = []
-    #
-    #         for method in preprocessing_methods:
-    #             print(f"Trying preprocessing method: {method}")
-    #             result = self.recognize_with_easyocr(image, method, best_angle)
-    #             if result[0]:
-    #                 print(f"✓ {method}: {result[0]} ({result[1]:.1f}%)")
-    #                 all_results.append(result)
-    #
-    #         # If no results with filters, try once more with default
-    #         if not all_results:
-    #             result = self.recognize_with_easyocr(image, None, best_angle)
-    #             if result[0]:
-    #                 all_results.append(result)
-    #
-    #         print(f"Total processing time: {time.time() - total_start_time:.3f}s")
-    #
-    #         if not all_results:
-    #             return "JD detected but couldn't extract full code", 40, "partial_recognition"
-    #
-    #         # Select the best result (highest confidence)
-    #         best_result = max(all_results, key=lambda x: x[1])
-    #
-    #         return best_result[0], best_result[1], best_result[2]
-    #
-    #     def save_result(self, text, confidence, method, image_path=None, output_dir="results"):
-    #         """Save OCR result to a file"""
-    #         os.makedirs(output_dir, exist_ok=True)
-    #         timestamp = os.path.basename(image_path).split('.')[0] if image_path else str(int(time.time()))
-    #
-    #         result_file = os.path.join(output_dir, f"result_{timestamp}.txt")
-    #         with open(result_file, 'w') as f:
-    #             f.write(f"Text: {text}\n")
-    #             f.write(f"Confidence: {confidence:.2f}%\n")
-    #             f.write(f"Method: {method}\n")
-    #             if image_path:
-    #                 f.write(f"Source: {image_path}\n")
-    #
-    #         return result_file

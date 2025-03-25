@@ -1,9 +1,11 @@
 # gui.py
+
 import cv2
 import os
 import io
-import sys  # Add this import
+import sys
 import logging
+import time
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QLabel, QTextEdit, QSplitter, QMessageBox,
                              QFileDialog, QStackedWidget, QGridLayout, QScrollArea, QApplication, QProgressDialog)
@@ -44,6 +46,9 @@ class CameraOCRGUI(QMainWindow):
         self.camera = camera
         self.ocr_processor = ocr_processor
         self.current_image = None
+        self.worker = None
+        self.progress = None
+        self.ocr_worker_class = None
         self.batch_images = []
         self.processing_queue = []
         self.current_image_index = 0
@@ -267,36 +272,211 @@ class CameraOCRGUI(QMainWindow):
         dialog.setValue(0)
         return dialog
 
+    # In gui/gui.py
+    # Keep only the more advanced version with error handling:
+
     def process_current_image(self):
-        """Process the currently displayed image"""
-        if self.current_image is not None:
+        """Process the currently displayed image with worker thread"""
+        if self.current_image is None:
+            return
+
+        # Disable processing button to prevent multiple processing
+        self.process_button.setEnabled(False)
+        self.results_text.append("Processing image...")
+
+        try:
+            # Create attractive progress dialog
+            self.progress = QProgressDialog("Initializing OCR engine...", "Cancel", 0, 100, self)
+            self.progress.setWindowTitle("OCR Processing")
+            self.progress.setWindowModality(Qt.WindowModal)
+            self.progress.setAutoClose(False)
+            self.progress.setMinimumDuration(0)
+            self.progress.setMinimumWidth(500)
+            self.progress.setMinimumHeight(120)
+
+            # Make the progress bar more visually interesting
+            self.progress.setStyleSheet("""
+                QProgressDialog {
+                    background-color: #f5f5f5;
+                    border: 1px solid #ddd;
+                    border-radius: 5px;
+                    padding: 5px;
+                }
+                QProgressBar {
+                    border: 1px solid #BDBDBD;
+                    border-radius: 4px;
+                    background-color: #e0e0e0;
+                    text-align: center;
+                    height: 25px;
+                    font-weight: bold;
+                }
+                QProgressBar::chunk {
+                    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
+                                                    stop:0 #2196F3, stop:1 #03A9F4);
+                    border-radius: 3px;
+                }
+                QLabel {
+                    font-size: 13px;
+                    color: #333;
+                    padding: 8px;
+                    font-weight: bold;
+                }
+                QPushButton {
+                    background-color: #f44336;
+                    color: white;
+                    border: none;
+                    padding: 5px 10px;
+                    border-radius: 3px;
+                }
+                QPushButton:hover {
+                    background-color: #d32f2f;
+                }
+            """)
+
+            # Show progress dialog immediately
+            self.progress.show()
+            QApplication.processEvents()  # Force UI update
+
+            # Check if worker class is available
+            if self.ocr_worker_class is None:
+                raise RuntimeError("OCR worker class not set")
+
+            # Create worker thread with deep copy of image
+            self.worker = self.ocr_worker_class(self.ocr_processor, self.current_image.copy())
+
+            # Connect all signals before starting the thread
+            self.worker.resultReady.connect(self.handle_ocr_result)
+            self.worker.progressUpdate.connect(self.update_progress)
+            self.worker.error.connect(self.handle_ocr_error)
+            self.worker.finished.connect(self.cleanup_worker)
+
+            # Add a cancellation option
+            self.progress.canceled.connect(self.cancel_processing)
+
+            # Start worker thread
+            self.worker.start()
+
+        except Exception as e:
+            logging.error(f"Failed to start processing: {str(e)}")
+            self.handle_ocr_error(f"Failed to start processing: {str(e)}")
+            self.cleanup_worker()
+
+    def handle_ocr_result(self, text, confidence, method):
+        """Handle OCR results from worker thread"""
+        # Update results
+        result_text = f"Detected Text: {text}\n"
+        result_text += f"Confidence: {confidence:.2f}%\n"
+        result_text += f"Method: {method}\n"
+        self.results_text.append(result_text)
+
+        logging.info(f"Processed image: {text} ({confidence:.2f}%)")
+
+    def update_progress(self, value, message):
+        """Update progress dialog with detailed information and animation"""
+        try:
+            # Store a local reference to avoid race conditions
+            progress_dialog = getattr(self, 'progress', None)
+
+            # Skip if no progress dialog
+            if progress_dialog is None:
+                return
+
             try:
-                self.process_button.setEnabled(False)
-                self.results_text.append("Processing image...")
+                # Set value and text
+                progress_dialog.setValue(value)
+                progress_dialog.setLabelText(message)
 
-                # Capture console output
-                console_capture = ConsoleCapture(self.log_text)
-                sys.stdout = console_capture
-                sys.stderr = console_capture
+                # Log important progress points
+                if value % 20 == 0 or value in [0, 100]:
+                    logging.info(f"OCR Progress: {value}% - {message}")
 
-                text, confidence, method = self.ocr_processor.recognize_text(self.current_image)
+                # Force UI update
+                QApplication.processEvents()
 
-                # Restore original stdout/stderr
-                sys.stdout = console_capture.original_stdout
-                sys.stderr = console_capture.original_stderr
+            except RuntimeError:
+                # Dialog was destroyed
+                logging.warning("Progress dialog no longer available")
 
-                result_text = f"Detected Text: {text}\n"
-                result_text += f"Confidence: {confidence:.2f}%\n"
-                result_text += f"Method: {method}\n"
-                self.results_text.append(result_text)
+        except Exception as e:
+            logging.error(f"Error updating progress: {str(e)}")
 
-                logging.info(f"Processed image: {text} ({confidence:.2f}%)")
+    def cleanup_worker(self):
+        """Clean up after worker thread completes"""
+        try:
+            # Store local reference first
+            local_worker = self.worker
+            local_progress = getattr(self, 'progress', None)
 
-            except Exception as e:
-                logging.error(f"Processing error: {str(e)}")
-                self.results_text.append(f"Error: {str(e)}")
-            finally:
-                self.process_button.setEnabled(True)
+            # Set class members to None immediately to prevent further updates
+            self.worker = None
+            self.progress = None
+
+            # Wait for worker to finish if it's still running
+            if local_worker and local_worker.isRunning():
+                local_worker.wait(200)  # Wait up to 200ms
+
+            # Close progress dialog last, after all updates should be done
+            if local_progress is not None:
+                try:
+                    local_progress.close()
+                except Exception as e:
+                    logging.error(f"Error closing progress dialog: {str(e)}")
+
+            # Re-enable processing button
+            self.process_button.setEnabled(True)
+
+        except Exception as e:
+            logging.error(f"Error during cleanup: {str(e)}")
+            self.process_button.setEnabled(True)
+
+    def handle_ocr_error(self, error_message):
+        """Handle errors from OCR worker"""
+        try:
+            self.results_text.append(f"ERROR: {error_message}")
+            logging.error(f"OCR processing error: {error_message}")
+
+            # Show error in results area with red highlight
+            formatted_error = f"<span style='color: red; font-weight: bold;'>ERROR: {error_message}</span>"
+            self.results_text.append(formatted_error)
+        except Exception as e:
+            logging.error(f"Error handling OCR error: {str(e)}")
+
+    def cancel_processing(self):
+        """Cancel current processing job"""
+        try:
+            logging.info("OCR processing canceled by user")
+
+            # Store local references
+            local_worker = self.worker
+            local_progress = self.progress
+
+            # Immediately set instance variables to None
+            self.worker = None
+            self.progress = None
+
+            # Close progress dialog first to prevent updates
+            if local_progress is not None:
+                try:
+                    local_progress.close()
+                except Exception as e:
+                    logging.error(f"Error closing progress dialog: {str(e)}")
+
+            # Then terminate the worker thread
+            if local_worker is not None and local_worker.isRunning():
+                local_worker.running = False  # Signal to stop if thread checks this
+                local_worker.wait(300)  # Wait for a clean exit
+
+                # Force termination if still running
+                if local_worker.isRunning():
+                    local_worker.terminate()
+                    local_worker.wait()
+
+            # Re-enable the process button
+            self.process_button.setEnabled(True)
+
+        except Exception as e:
+            logging.error(f"Error canceling processing: {str(e)}")
+            self.process_button.setEnabled(True)
 
     def process_batch(self):
         """Process all images in the batch"""
@@ -469,9 +649,182 @@ class CameraOCRGUI(QMainWindow):
     def closeEvent(self, event):
         """Clean up resources when closing"""
         try:
-            self.stop_camera()
+            # Only stop camera preview timer if it exists
+            if hasattr(self, 'preview_timer') and self.preview_timer.isActive():
+                self.preview_timer.stop()
+
+            # Only stop process timer if it exists
+            if hasattr(self, 'process_timer') and self.process_timer.isActive():
+                self.process_timer.stop()
+
+            # Release camera resources
+            if hasattr(self, 'camera') and self.camera is not None:
+                self.camera.release()
+
             logging.info("Application closed cleanly")
             event.accept()
         except Exception as e:
             logging.error(f"Error during cleanup: {str(e)}")
             event.accept()
+
+    def handle_ocr_result(self, text, confidence, method):
+        """Handle OCR results from worker thread and show confirmation dialog"""
+        # Update results in the main window
+        result_text = f"Detected Text: {text}\n"
+        result_text += f"Confidence: {confidence:.2f}%\n"
+        result_text += f"Method: {method}\n"
+        self.results_text.append(result_text)
+
+        logging.info(f"Processed image: {text} ({confidence:.2f}%)")
+
+        # Show confirmation dialog
+        self.show_confirm_dialog(text, confidence)
+
+    def show_confirm_dialog(self, text, confidence):
+        """Show a dialog to confirm or modify the OCR result"""
+        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton, QLabel
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Confirm OCR Result")
+        dialog.setMinimumWidth(400)
+        dialog.setStyleSheet("""
+            QDialog {
+                background-color: #f5f5f5;
+                border-radius: 8px;
+            }
+            QLabel {
+                font-size: 14px;
+                padding: 10px;
+            }
+            QPushButton {
+                min-width: 120px;
+                padding: 10px;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QLineEdit {
+                padding: 10px;
+                font-size: 16px;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+            }
+            #resultLabel {
+                font-size: 24px;
+                font-weight: bold;
+            }
+        """)
+
+        layout = QVBoxLayout()
+
+        # Add result label
+        label = QLabel("Is this result correct?")
+        layout.addWidget(label)
+
+        # Show the result in large text
+        result_label = QLabel(text)
+        result_label.setObjectName("resultLabel")
+        result_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(result_label)
+
+        # Add confidence
+        conf_label = QLabel(f"Confidence: {confidence:.1f}%")
+        conf_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(conf_label)
+
+        # Buttons for confirmation
+        button_layout = QHBoxLayout()
+
+        # Green confirm button
+        confirm_button = QPushButton("Correct")
+        confirm_button.setStyleSheet("background-color: #4CAF50; color: white;")
+        button_layout.addWidget(confirm_button)
+
+        # Red edit button
+        edit_button = QPushButton("Incorrect")
+        edit_button.setStyleSheet("background-color: #F44336; color: white;")
+        button_layout.addWidget(edit_button)
+
+        layout.addLayout(button_layout)
+
+        # Hidden text edit for corrections (initially hidden)
+        text_edit = QLineEdit(text)
+        text_edit.setVisible(False)
+        layout.addWidget(text_edit)
+
+        # Save button (initially hidden)
+        save_button = QPushButton("Save Correction")
+        save_button.setStyleSheet("background-color: #2196F3; color: white;")
+        save_button.setVisible(False)
+        layout.addWidget(save_button)
+
+        dialog.setLayout(layout)
+
+        # Connect events
+        def on_confirm():
+            logging.info(f"Result confirmed by user: {text}")
+            self.save_final_result(text)
+            dialog.accept()
+
+        def on_edit():
+            # Show editing interface
+            result_label.setVisible(False)
+            conf_label.setVisible(False)
+            confirm_button.setVisible(False)
+            edit_button.setVisible(False)
+
+            # Show editing controls
+            text_edit.setVisible(True)
+            save_button.setVisible(True)
+
+            # Update label
+            label.setText("Please correct the result:")
+
+        def on_save_correction():
+            corrected_text = text_edit.text().strip()
+            logging.info(f"Result corrected by user: {text} → {corrected_text}")
+            self.save_final_result(corrected_text)
+            dialog.accept()
+
+        # Connect signals to slots
+        confirm_button.clicked.connect(on_confirm)
+        edit_button.clicked.connect(on_edit)
+        save_button.clicked.connect(on_save_correction)
+
+        # Execute dialog
+        dialog.exec_()
+
+    def save_final_result(self, final_text):
+        """Save the final confirmed or corrected result to a separate file"""
+        try:
+            # Create results directory if it doesn't exist
+            results_dir = "result_scan"
+            os.makedirs(results_dir, exist_ok=True)
+
+            # Create a filename based on the detected text and timestamp
+            # Replace any invalid filename characters
+            safe_text = ''.join(c for c in final_text if c.isalnum() or c in ' _-')
+            safe_text = safe_text.strip().replace(' ', '_')
+
+            timestamp = time.strftime("%Y%m%d-%H%M%S")
+
+            # Use detected text in filename if available, otherwise use timestamp only
+            if safe_text:
+                result_file = os.path.join(results_dir, f"{safe_text}_{timestamp}.txt")
+            else:
+                result_file = os.path.join(results_dir, f"scan_{timestamp}.txt")
+
+            # Write the result to file
+            with open(result_file, "w") as f:
+                f.write(f"Final Result: {final_text}\n")
+                f.write(f"Confidence: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"Timestamp: {timestamp}\n")
+
+            logging.info(f"Final result saved to {result_file}")
+
+            # Show confirmation in results area
+            self.results_text.append(f"\n✅ Result saved: {final_text}")
+            self.results_text.append(f"📄 Saved to: {result_file}")
+
+        except Exception as e:
+            logging.error(f"Error saving final result: {str(e)}")
+            self.results_text.append(f"❌ Error saving result: {str(e)}")
