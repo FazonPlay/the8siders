@@ -362,14 +362,21 @@ class CameraOCRGUI(QMainWindow):
             self.cleanup_worker()
 
     def handle_ocr_result(self, text, confidence, method):
-        """Handle OCR results from worker thread"""
-        # Update results
+        """Handle OCR results from worker thread and show confirmation dialog"""
+        # Skip showing results if cancellation is in progress
+        if hasattr(self, 'is_user_cancelled') and self.is_user_cancelled:
+            return
+
+        # Update results in the main window
         result_text = f"Detected Text: {text}\n"
         result_text += f"Confidence: {confidence:.2f}%\n"
         result_text += f"Method: {method}\n"
         self.results_text.append(result_text)
 
         logging.info(f"Processed image: {text} ({confidence:.2f}%)")
+
+        # Show confirmation dialog
+        self.show_confirm_dialog(text, confidence)
 
     def update_progress(self, value, message):
         """Update progress dialog with detailed information and animation"""
@@ -442,41 +449,70 @@ class CameraOCRGUI(QMainWindow):
             logging.error(f"Error handling OCR error: {str(e)}")
 
     def cancel_processing(self):
-        """Cancel current processing job"""
-        try:
-            logging.info("OCR processing canceled by user")
+        """Cancel current processing job safely"""
+        # Set cancellation flag immediately
+        self.is_user_cancelled = True
+        logging.info("OCR processing canceled by user")
 
-            # Store local references
+        try:
+            # Store references to worker and progress dialog
             local_worker = self.worker
             local_progress = self.progress
 
-            # Immediately set instance variables to None
+            # Clear references first to prevent further callbacks
             self.worker = None
             self.progress = None
 
-            # Close progress dialog first to prevent updates
+            # Close progress dialog if it exists
             if local_progress is not None:
                 try:
                     local_progress.close()
                 except Exception as e:
                     logging.error(f"Error closing progress dialog: {str(e)}")
 
-            # Then terminate the worker thread
-            if local_worker is not None and local_worker.isRunning():
-                local_worker.running = False  # Signal to stop if thread checks this
-                local_worker.wait(300)  # Wait for a clean exit
+            # Stop the worker thread gracefully
+            if local_worker is not None:
+                # Signal the worker to stop
+                if hasattr(local_worker, 'running'):
+                    local_worker.running = False
 
-                # Force termination if still running
-                if local_worker.isRunning():
-                    local_worker.terminate()
-                    local_worker.wait()
+                # Safely disconnect signals one by one
+                try:
+                    local_worker.resultReady.disconnect()
+                except Exception:
+                    pass
 
-            # Re-enable the process button
-            self.process_button.setEnabled(True)
+                try:
+                    local_worker.progressUpdate.disconnect()
+                except Exception:
+                    pass
+
+                try:
+                    local_worker.error.disconnect()
+                except Exception:
+                    pass
+
+                try:
+                    local_worker.finished.disconnect()
+                except Exception:
+                    pass
+
+                # Give the thread time to exit gracefully
+                if not local_worker.wait(200):  # Wait 200ms for thread to finish
+                    local_worker.quit()  # Use quit instead of terminate
+
+            # Add cancellation message to results only once
+            if "Processing canceled by user" not in self.results_text.toPlainText():
+                self.results_text.append("Processing canceled by user")
 
         except Exception as e:
-            logging.error(f"Error canceling processing: {str(e)}")
+            logging.error(f"Error during cancellation: {str(e)}")
+        finally:
+            # Always re-enable the process button
             self.process_button.setEnabled(True)
+
+            # Reset cancellation flag after a delay
+            QTimer.singleShot(500, lambda: setattr(self, 'is_user_cancelled', False))
 
     def process_batch(self):
         """Process all images in the batch"""
@@ -781,7 +817,7 @@ class CameraOCRGUI(QMainWindow):
 
         def on_save_correction():
             corrected_text = text_edit.text().strip()
-            logging.info(f"Result corrected by user: {text} → {corrected_text}")
+            logging.info(f"Result corrected by user: {text} -> {corrected_text}")
             self.save_final_result(corrected_text)
             dialog.accept()
 

@@ -26,39 +26,44 @@ class OCRWorker(QThread):
         try:
             # Initial phase
             self.progressUpdate.emit(0, "Starting OCR engine...")
-            self.msleep(100)  # More time between updates
+            if not self.running: return
+            self.msleep(100)
 
             # Orientation testing phase
             self.progressUpdate.emit(20, "Testing multiple image orientations...")
+            if not self.running: return
             self.msleep(100)
 
             # Preprocessing phase
             self.progressUpdate.emit(40, "Removing noise artifacts...")
+            if not self.running: return
             self.msleep(100)
 
             # OCR phase
             self.progressUpdate.emit(60, "Applying specialized JD format detection...")
+            if not self.running: return
             self.msleep(100)
 
-            # Actual processing happens here
+            # Actual processing happens here - check before starting actual processing
+            if not self.running: return
             text, confidence, method = self.ocr_processor.recognize_text(self.image)
 
             # Post-processing phase
             self.progressUpdate.emit(80, "Compiling results from all methods...")
+            if not self.running: return
             self.msleep(100)
 
-            # Emit the result - this will trigger the confirmation dialog
-            self.resultReady.emit(text, confidence, method)
-
-            # This is key: wait longer before finishing progress to allow dialog to show
-            self.msleep(300)  # Increased from 100ms to 300ms
-
-            # Final progress update
-            self.progressUpdate.emit(100, "Processing complete!")
+            # Only emit results if not canceled
+            if self.running:
+                self.resultReady.emit(text, confidence, method)
+                # Wait longer before finishing progress to allow dialog to show
+                self.msleep(300)
+                self.progressUpdate.emit(100, "Processing complete!")
 
         except Exception as e:
             logging.error(f"OCR Worker error: {str(e)}")
-            self.error.emit(str(e))
+            if self.running:  # Only emit error if not canceled
+                self.error.emit(str(e))
         finally:
             self.finished.emit()
 
