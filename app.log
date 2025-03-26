@@ -625,3 +625,6 @@
 2025-03-26 17:26:37,541 - INFO - OCR Progress: 60% - Applying specialized JD format detection...
 2025-03-26 17:26:39,250 - INFO - OCR processing canceled by user
 2025-03-26 17:28:06,304 - INFO - Application closed cleanly
+2025-03-26 17:29:23,820 - INFO - Starting application
+2025-03-26 17:29:23,820 - INFO - Initializing components
+2025-03-26 17:29:26,145 - INFO - Application ready

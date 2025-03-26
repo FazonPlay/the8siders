@@ -55,7 +55,20 @@ class CameraOCRGUI(QMainWindow):
 
         # Window setup
         self.setWindowTitle("OCR Image Processor")
-        self.setMinimumSize(1920, 1080)
+
+        # Get the available screen size
+        desktop = QApplication.desktop()
+        screen_rect = desktop.availableGeometry(self)
+
+        # Set to maximum available screen size
+        self.setGeometry(0, 0, screen_rect.width(), screen_rect.height())
+
+        # Optional: Make fully fullscreen (no window borders)
+        # self.showFullScreen()  # Uncomment this line for true fullscreen
+
+        # Or maximize but keep window borders
+        self.showMaximized()
+
         self.setStyleSheet("""
             QMainWindow {
                 background-color: #f0f0f0;
