@@ -7,8 +7,8 @@ import sys
 import logging
 import time
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-                             QPushButton, QLabel, QTextEdit, QSplitter, QMessageBox,
-                             QFileDialog, QStackedWidget, QGridLayout, QScrollArea, QApplication, QProgressDialog)
+                             QPushButton, QLabel, QTextEdit, QMessageBox,
+                             QFileDialog, QGridLayout, QScrollArea, QApplication, QProgressDialog)
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QImage, QPixmap
 
@@ -55,7 +55,7 @@ class CameraOCRGUI(QMainWindow):
 
         # Window setup
         self.setWindowTitle("OCR Image Processor")
-        self.setMinimumSize(1200, 800)
+        self.setMinimumSize(1920, 1080)
         self.setStyleSheet("""
             QMainWindow {
                 background-color: #f0f0f0;
@@ -110,6 +110,8 @@ class CameraOCRGUI(QMainWindow):
         self.process_button = QPushButton("Process")
         self.prev_button = QPushButton("Previous")
         self.next_button = QPushButton("Next")
+        self.choose_camera_button = QPushButton("Choose Camera")
+        self.choose_camera_button.setStyleSheet("background-color: #9C27B0; color: white;")
 
         # Add buttons to grid
         button_layout.addWidget(self.camera_button, 0, 0)
@@ -118,6 +120,7 @@ class CameraOCRGUI(QMainWindow):
         button_layout.addWidget(self.process_button, 1, 1)
         button_layout.addWidget(self.prev_button, 2, 0)
         button_layout.addWidget(self.next_button, 2, 1)
+        button_layout.addWidget(self.choose_camera_button, 3, 0, 1, 2)  # Span both columns
 
         # Results and logging area
         results_label = QLabel("Results:")
@@ -168,9 +171,98 @@ class CameraOCRGUI(QMainWindow):
         self.process_button.clicked.connect(self.process_current_image)
         self.prev_button.clicked.connect(self.show_previous_image)
         self.next_button.clicked.connect(self.show_next_image)
+        self.choose_camera_button.clicked.connect(self.show_camera_selector)
 
         # Initialize button states
         self.update_button_states()
+
+    def show_camera_selector(self):
+        """Show a dialog to select which camera to use"""
+        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QPushButton, QLabel, QComboBox, QHBoxLayout
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Select Camera")
+        dialog.setMinimumWidth(300)
+        dialog.setStyleSheet("""
+            QDialog { background-color: #f5f5f5; border-radius: 8px; }
+            QLabel { font-size: 14px; padding: 10px; }
+            QPushButton { min-width: 100px; padding: 8px; border-radius: 4px; font-weight: bold; }
+            QComboBox { padding: 8px; font-size: 14px; border: 1px solid #ddd; border-radius: 4px; }
+        """)
+
+        layout = QVBoxLayout()
+
+        # Header
+        label = QLabel("Select which camera to use:")
+        layout.addWidget(label)
+
+        # Camera selection dropdown
+        camera_combo = QComboBox()
+
+        # Check available cameras (0-5)
+        available_cameras = []
+        for i in range(5):
+            cap = cv2.VideoCapture(i)
+            if cap.isOpened():
+                available_cameras.append(i)
+                camera_name = f"Camera {i}"
+                try:
+                    # Try to get camera name (may not work on all systems)
+                    ret, frame = cap.read()
+                    if ret:
+                        camera_name += f" ({cap.get(cv2.CAP_PROP_FRAME_WIDTH)}x{cap.get(cv2.CAP_PROP_FRAME_HEIGHT)})"
+                except:
+                    pass
+                camera_combo.addItem(camera_name, i)
+            cap.release()
+
+        # Check if current camera is in list and select it
+        current_index = self.camera.current_camera_index
+        combo_index = camera_combo.findData(current_index)
+        if combo_index >= 0:
+            camera_combo.setCurrentIndex(combo_index)
+
+        layout.addWidget(camera_combo)
+
+        # No cameras found message
+        if camera_combo.count() == 0:
+            camera_combo.addItem("No cameras detected")
+            camera_combo.setEnabled(False)
+
+        # Button layout
+        button_layout = QHBoxLayout()
+        select_button = QPushButton("Select")
+        select_button.setStyleSheet("background-color: #4CAF50; color: white;")
+        cancel_button = QPushButton("Cancel")
+        cancel_button.setStyleSheet("background-color: #F44336; color: white;")
+
+        button_layout.addWidget(select_button)
+        button_layout.addWidget(cancel_button)
+        layout.addLayout(button_layout)
+
+        dialog.setLayout(layout)
+
+        # Button event handlers
+        def on_select():
+            if camera_combo.count() > 0 and camera_combo.isEnabled():
+                selected_index = camera_combo.currentData()
+                if selected_index is not None and selected_index != self.camera.current_camera_index:
+                    self.camera.current_camera_index = selected_index
+                    # Release current camera to prepare for new one
+                    self.camera.release()
+                    logging.info(f"Selected camera changed to index {selected_index}")
+                    self.results_text.append(f"Camera changed to: Camera {selected_index}")
+            dialog.accept()
+
+        def on_cancel():
+            dialog.reject()
+
+        # Connect signals
+        select_button.clicked.connect(on_select)
+        cancel_button.clicked.connect(on_cancel)
+
+        # Execute dialog
+        dialog.exec_()
 
     def capture_single_image(self):
         """Capture a single image from camera"""
@@ -442,15 +534,15 @@ class CameraOCRGUI(QMainWindow):
 
     def handle_ocr_error(self, error_message):
         """Handle errors from OCR worker"""
-        try:
-            self.results_text.append(f"ERROR: {error_message}")
-            logging.error(f"OCR processing error: {error_message}")
+        # Skip showing errors if cancellation is in progress
+        if getattr(self, 'is_user_cancelled', False):
+            return
 
-            # Show error in results area with red highlight
-            formatted_error = f"<span style='color: red; font-weight: bold;'>ERROR: {error_message}</span>"
-            self.results_text.append(formatted_error)
-        except Exception as e:
-            logging.error(f"Error handling OCR error: {str(e)}")
+        logging.error(f"OCR processing error: {error_message}")
+
+        # Add to UI with formatting
+        formatted_error = f"<span style='color: red; font-weight: bold;'>ERROR: {error_message}</span>"
+        self.results_text.append(formatted_error)
 
     def cancel_processing(self):
         """Cancel current processing job safely"""
@@ -487,25 +579,11 @@ class CameraOCRGUI(QMainWindow):
                 local_worker.running = False
 
                 # Disconnect signals - handle each separately with try/except
-                try:
-                    local_worker.resultReady.disconnect()
-                except (TypeError, RuntimeError):
-                    pass
-
-                try:
-                    local_worker.progressUpdate.disconnect()
-                except (TypeError, RuntimeError):
-                    pass
-
-                try:
-                    local_worker.error.disconnect()
-                except (TypeError, RuntimeError):
-                    pass
-
-                try:
-                    local_worker.finished.disconnect()
-                except (TypeError, RuntimeError):
-                    pass
+                for signal_name in ['resultReady', 'progressUpdate', 'error', 'finished']:
+                    try:
+                        getattr(local_worker, signal_name).disconnect()
+                    except (TypeError, RuntimeError):
+                        pass
 
                 # Gracefully wait for thread to finish
                 if not local_worker.wait(300):  # Wait 300ms for thread to finish
@@ -708,19 +786,6 @@ class CameraOCRGUI(QMainWindow):
             logging.error(f"Error during cleanup: {str(e)}")
             event.accept()
 
-    def handle_ocr_result(self, text, confidence, method):
-        """Handle OCR results from worker thread and show confirmation dialog"""
-        # Update results in the main window
-        result_text = f"Detected Text: {text}\n"
-        result_text += f"Confidence: {confidence:.2f}%\n"
-        result_text += f"Method: {method}\n"
-        self.results_text.append(result_text)
-
-        logging.info(f"Processed image: {text} ({confidence:.2f}%)")
-
-        # Show confirmation dialog
-        self.show_confirm_dialog(text, confidence)
-
     def show_confirm_dialog(self, text, confidence):
         """Show a dialog to confirm or modify the OCR result"""
         from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton, QLabel
@@ -729,95 +794,63 @@ class CameraOCRGUI(QMainWindow):
         dialog.setWindowTitle("Confirm OCR Result")
         dialog.setMinimumWidth(400)
         dialog.setStyleSheet("""
-            QDialog {
-                background-color: #f5f5f5;
-                border-radius: 8px;
-            }
-            QLabel {
-                font-size: 14px;
-                padding: 10px;
-            }
-            QPushButton {
-                min-width: 120px;
-                padding: 10px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-            QLineEdit {
-                padding: 10px;
-                font-size: 16px;
-                border: 1px solid #ddd;
-                border-radius: 4px;
-            }
-            #resultLabel {
-                font-size: 24px;
-                font-weight: bold;
-            }
+            QDialog { background-color: #f5f5f5; border-radius: 8px; }
+            QLabel { font-size: 14px; padding: 10px; }
+            QPushButton { min-width: 120px; padding: 10px; border-radius: 4px; font-weight: bold; }
+            QLineEdit { padding: 10px; font-size: 16px; border: 1px solid #ddd; border-radius: 4px; }
+            #resultLabel { font-size: 24px; font-weight: bold; }
         """)
 
         layout = QVBoxLayout()
 
-        # Add result label
+        # Header and result display
         label = QLabel("Is this result correct?")
-        layout.addWidget(label)
-
-        # Show the result in large text
         result_label = QLabel(text)
         result_label.setObjectName("resultLabel")
         result_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(result_label)
-
-        # Add confidence
         conf_label = QLabel(f"Confidence: {confidence:.1f}%")
         conf_label.setAlignment(Qt.AlignCenter)
+
+        layout.addWidget(label)
+        layout.addWidget(result_label)
         layout.addWidget(conf_label)
 
         # Buttons for confirmation
         button_layout = QHBoxLayout()
-
-        # Green confirm button
         confirm_button = QPushButton("Correct")
         confirm_button.setStyleSheet("background-color: #4CAF50; color: white;")
-        button_layout.addWidget(confirm_button)
-
-        # Red edit button
         edit_button = QPushButton("Incorrect")
         edit_button.setStyleSheet("background-color: #F44336; color: white;")
-        button_layout.addWidget(edit_button)
 
+        button_layout.addWidget(confirm_button)
+        button_layout.addWidget(edit_button)
         layout.addLayout(button_layout)
 
-        # Hidden text edit for corrections (initially hidden)
+        # Hidden correction controls
         text_edit = QLineEdit(text)
         text_edit.setVisible(False)
-        layout.addWidget(text_edit)
-
-        # Save button (initially hidden)
         save_button = QPushButton("Save Correction")
         save_button.setStyleSheet("background-color: #2196F3; color: white;")
         save_button.setVisible(False)
-        layout.addWidget(save_button)
 
+        layout.addWidget(text_edit)
+        layout.addWidget(save_button)
         dialog.setLayout(layout)
 
-        # Connect events
+        # Button event handlers
         def on_confirm():
             logging.info(f"Result confirmed by user: {text}")
             self.save_final_result(text)
             dialog.accept()
 
         def on_edit():
-            # Show editing interface
+            # Switch to editing mode
             result_label.setVisible(False)
             conf_label.setVisible(False)
             confirm_button.setVisible(False)
             edit_button.setVisible(False)
-
-            # Show editing controls
             text_edit.setVisible(True)
             save_button.setVisible(True)
-
-            # Update label
             label.setText("Please correct the result:")
 
         def on_save_correction():
@@ -826,7 +859,7 @@ class CameraOCRGUI(QMainWindow):
             self.save_final_result(corrected_text)
             dialog.accept()
 
-        # Connect signals to slots
+        # Connect signals
         confirm_button.clicked.connect(on_confirm)
         edit_button.clicked.connect(on_edit)
         save_button.clicked.connect(on_save_correction)
