@@ -364,7 +364,7 @@ class CameraOCRGUI(QMainWindow):
     def handle_ocr_result(self, text, confidence, method):
         """Handle OCR results from worker thread and show confirmation dialog"""
         # Skip showing results if cancellation is in progress
-        if hasattr(self, 'is_user_cancelled') and self.is_user_cancelled:
+        if getattr(self, 'is_user_cancelled', False):
             return
 
         # Update results in the main window
@@ -377,6 +377,10 @@ class CameraOCRGUI(QMainWindow):
 
         # Show confirmation dialog
         self.show_confirm_dialog(text, confidence)
+
+    def reset_cancel_flag(self):
+        """Reset the cancellation flag safely"""
+        self.is_user_cancelled = False
 
     def update_progress(self, value, message):
         """Update progress dialog with detailed information and animation"""
@@ -450,18 +454,25 @@ class CameraOCRGUI(QMainWindow):
 
     def cancel_processing(self):
         """Cancel current processing job safely"""
+        # Check if cancellation is already in progress to avoid duplicate logging
+        if getattr(self, 'is_user_cancelled', False):
+            return  # Already cancelling, don't do it again
+
         # Set cancellation flag immediately
         self.is_user_cancelled = True
         logging.info("OCR processing canceled by user")
 
         try:
-            # Store references to worker and progress dialog
-            local_worker = self.worker
-            local_progress = self.progress
+            # Cache references to worker and progress
+            local_worker = getattr(self, 'worker', None)
+            local_progress = getattr(self, 'progress', None)
 
-            # Clear references first to prevent further callbacks
+            # Clear references FIRST
             self.worker = None
             self.progress = None
+
+            # Add cancellation message to results
+            self.results_text.append("Processing canceled by user")
 
             # Close progress dialog if it exists
             if local_progress is not None:
@@ -470,41 +481,35 @@ class CameraOCRGUI(QMainWindow):
                 except Exception as e:
                     logging.error(f"Error closing progress dialog: {str(e)}")
 
-            # Stop the worker thread gracefully
-            if local_worker is not None:
-                # Signal the worker to stop
-                if hasattr(local_worker, 'running'):
-                    local_worker.running = False
+            # Stop worker thread
+            if local_worker is not None and local_worker.isRunning():
+                # Set running flag to False
+                local_worker.running = False
 
-                # Safely disconnect signals one by one
+                # Disconnect signals - handle each separately with try/except
                 try:
                     local_worker.resultReady.disconnect()
-                except Exception:
+                except (TypeError, RuntimeError):
                     pass
 
                 try:
                     local_worker.progressUpdate.disconnect()
-                except Exception:
+                except (TypeError, RuntimeError):
                     pass
 
                 try:
                     local_worker.error.disconnect()
-                except Exception:
+                except (TypeError, RuntimeError):
                     pass
 
                 try:
                     local_worker.finished.disconnect()
-                except Exception:
+                except (TypeError, RuntimeError):
                     pass
 
-                # Give the thread time to exit gracefully
-                if not local_worker.wait(200):  # Wait 200ms for thread to finish
+                # Gracefully wait for thread to finish
+                if not local_worker.wait(300):  # Wait 300ms for thread to finish
                     local_worker.quit()  # Use quit instead of terminate
-
-            # Add cancellation message to results only once
-            if "Processing canceled by user" not in self.results_text.toPlainText():
-                self.results_text.append("Processing canceled by user")
-
         except Exception as e:
             logging.error(f"Error during cancellation: {str(e)}")
         finally:
@@ -512,7 +517,7 @@ class CameraOCRGUI(QMainWindow):
             self.process_button.setEnabled(True)
 
             # Reset cancellation flag after a delay
-            QTimer.singleShot(500, lambda: setattr(self, 'is_user_cancelled', False))
+            QTimer.singleShot(500, self.reset_cancel_flag)
 
     def process_batch(self):
         """Process all images in the batch"""
