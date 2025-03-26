@@ -8,10 +8,10 @@ import logging
 import time
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QLabel, QTextEdit, QMessageBox,
-                             QFileDialog, QGridLayout, QScrollArea, QApplication, QProgressDialog)
-from PyQt5.QtCore import Qt, QTimer
+                             QFileDialog, QGridLayout, QScrollArea, QApplication, QProgressDialog,
+                             QDialog, QVBoxLayout, QHBoxLayout, QLineEdit, QComboBox)
+from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt5.QtGui import QImage, QPixmap
-
 
 class QTextEditLogger(logging.Handler):
     def __init__(self, text_widget):
@@ -23,7 +23,7 @@ class QTextEditLogger(logging.Handler):
         msg = self.format(record)
         self.text_widget.append(msg)
 
-# gui.py - Replace the ConsoleCapture import with this class
+
 class ConsoleCapture(io.StringIO):
     def __init__(self, gui_log):
         super().__init__()
@@ -40,9 +40,34 @@ class ConsoleCapture(io.StringIO):
         self.original_stdout.flush()
 
 
+class OCRWorker(QThread):
+    progressChanged = pyqtSignal(int)
+    finished = pyqtSignal(str, float, str, float)
+    errorOccurred = pyqtSignal(str)
+
+    def __init__(self, processor, image):
+        super().__init__()
+        self.processor = processor
+        self.image = image
+
+    def run(self):
+        try:
+            start_time = time.time()
+            for i in range(0, 80, 10):
+                time.sleep(0.1)  # Simule le chargement progressif
+                self.progressChanged.emit(i)
+            text, confidence, method = self.processor.recognize_text(self.image)
+            total_time = time.time() - start_time
+            self.progressChanged.emit(100)
+            self.finished.emit(text, confidence, method, total_time)
+        except Exception as e:
+            self.errorOccurred.emit(str(e))
+
+
 class CameraOCRGUI(QMainWindow):
     def __init__(self, camera, ocr_processor):
         super().__init__()
+        self.load_stylesheet("style.css")
         self.camera = camera
         self.ocr_processor = ocr_processor
         self.current_image = None
@@ -52,6 +77,9 @@ class CameraOCRGUI(QMainWindow):
         self.batch_images = []
         self.processing_queue = []
         self.current_image_index = 0
+        self.last_image_path = None
+        self.processing_duration = 0
+        self.is_user_cancelled = False
 
         # Window setup
         self.setWindowTitle("OCR Image Processor")
@@ -63,44 +91,8 @@ class CameraOCRGUI(QMainWindow):
         # Set to maximum available screen size
         self.setGeometry(0, 0, screen_rect.width(), screen_rect.height())
 
-        # Optional: Make fully fullscreen (no window borders)
-        # self.showFullScreen()  # Uncomment this line for true fullscreen
-
         # Or maximize but keep window borders
         self.showMaximized()
-
-        self.setStyleSheet("""
-            QMainWindow {
-                background-color: #f0f0f0;
-                font-color: #000;
-            }
-            QPushButton {
-                background-color: #2196F3;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-                min-width: 100px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #1976D2;
-            }
-            QPushButton:disabled {
-                background-color: #BDBDBD;
-            }
-            QLabel {
-                font-size: 12px;
-                color: #333;
-            }
-            QTextEdit {
-                border: 1px solid #BDBDBD;
-                border-radius: 4px;
-                padding: 4px;
-                background-color: white;
-                color: black;
-            }
-        """)
 
         # Create central widget and main layout
         central_widget = QWidget()
@@ -124,6 +116,7 @@ class CameraOCRGUI(QMainWindow):
         self.prev_button = QPushButton("Previous")
         self.next_button = QPushButton("Next")
         self.choose_camera_button = QPushButton("Choose Camera")
+        self.choose_camera_button.setObjectName("choose_camera_button")
         self.choose_camera_button.setStyleSheet("background-color: #9C27B0; color: white;")
 
         # Add buttons to grid
@@ -144,12 +137,18 @@ class CameraOCRGUI(QMainWindow):
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
 
+        history_label = QLabel("History:")
+        self.history_text = QTextEdit()
+        self.history_text.setReadOnly(True)
+
         # Add widgets to left panel
         left_layout.addWidget(button_panel)
         left_layout.addWidget(results_label)
         left_layout.addWidget(self.results_text)
         left_layout.addWidget(log_label)
         left_layout.addWidget(self.log_text)
+        left_layout.addWidget(history_label)
+        left_layout.addWidget(self.history_text)
 
         # Create right panel (image display)
         right_panel = QWidget()
@@ -157,15 +156,9 @@ class CameraOCRGUI(QMainWindow):
 
         # Image display label
         self.image_label = QLabel()
+        self.image_label.setObjectName("image_label")
         self.image_label.setAlignment(Qt.AlignCenter)
         self.image_label.setMinimumSize(640, 480)
-        self.image_label.setStyleSheet("""
-            QLabel {
-                background-color: #333;
-                border: 2px solid #BDBDBD;
-                border-radius: 4px;
-            }
-        """)
 
         # Add image label to scroll area
         scroll_area = QScrollArea()
@@ -189,19 +182,21 @@ class CameraOCRGUI(QMainWindow):
         # Initialize button states
         self.update_button_states()
 
+    def load_stylesheet(self, filename):
+            try:
+                base_path = os.path.dirname(os.path.abspath(__file__))
+                path = os.path.join(base_path, filename)
+                with open(path, "r") as f:
+                    self.setStyleSheet(f.read())
+                logging.info(f"CSS chargÃ© depuis {path}")
+            except Exception as e:
+                logging.error(f"Erreur chargement CSS: {e}")
+
     def show_camera_selector(self):
         """Show a dialog to select which camera to use"""
-        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QPushButton, QLabel, QComboBox, QHBoxLayout
-
         dialog = QDialog(self)
         dialog.setWindowTitle("Select Camera")
         dialog.setMinimumWidth(300)
-        dialog.setStyleSheet("""
-            QDialog { background-color: #f5f5f5; border-radius: 8px; }
-            QLabel { font-size: 14px; padding: 10px; }
-            QPushButton { min-width: 100px; padding: 8px; border-radius: 4px; font-weight: bold; }
-            QComboBox { padding: 8px; font-size: 14px; border: 1px solid #ddd; border-radius: 4px; }
-        """)
 
         layout = QVBoxLayout()
 
@@ -281,33 +276,36 @@ class CameraOCRGUI(QMainWindow):
         """Capture a single image from camera"""
         self.results_text.clear()
         try:
-            image, _ = self.camera.capture_single()
+            image, image_path = self.camera.capture_single()
             if image is not None:
                 self.current_image = image
+                self.last_image_path = image_path
                 self.batch_images = [image]
                 self.current_image_index = 0
                 self.display_current_image()
-                self.results_text.append("Image captured successfully")
+                self.results_text.append(f"Image captured successfully and saved to {image_path}")
                 self.update_button_states()
         except Exception as e:
             self.results_text.append(f"Error capturing image: {str(e)}")
-            logging.error(f"Camera error: {str(e)}")
+            logging.error(f"Error during image capture: {str(e)}")
 
     def capture_batch_images(self):
         """Capture multiple images in sequence"""
         self.results_text.clear()
         try:
-            images, _ = self.camera.capture_multiple(num_images=3)
+            images, image_paths = self.camera.capture_multiple(num_images=3)
             if images:
                 self.batch_images = images
                 self.current_image = images[0]
                 self.current_image_index = 0
                 self.display_current_image()
-                self.results_text.append(f"Captured {len(images)} images")
+                self.results_text.append(f"Captured {len(images)} images successfully")
+                for i, path in enumerate(image_paths):
+                    self.results_text.append(f"Image {i + 1}: {path}")
                 self.update_button_states()
         except Exception as e:
             self.results_text.append(f"Error capturing batch: {str(e)}")
-            logging.error(f"Camera error: {str(e)}")
+            logging.error(f"Error during batch capture: {str(e)}")
 
     def load_image(self):
         """Load image from file"""
@@ -319,31 +317,33 @@ class CameraOCRGUI(QMainWindow):
                 image = cv2.imread(file_path)
                 if image is not None:
                     self.current_image = image
+                    self.last_image_path = file_path
                     self.batch_images = [image]
                     self.current_image_index = 0
                     self.display_current_image()
                     self.results_text.append(f"Loaded image: {file_path}")
                     self.update_button_states()
                 else:
-                    raise ValueError("Failed to load image")
+                    raise ValueError(f"Failed to load image from {file_path}")
             except Exception as e:
                 self.results_text.append(f"Error loading image: {str(e)}")
-                logging.error(f"Image loading error: {str(e)}")
+                logging.error(f"Error loading image: {str(e)}")
 
     def display_current_image(self):
         """Display the current image in the GUI"""
         if self.current_image is not None:
-            # Convert image for display
             height, width = self.current_image.shape[:2]
             bytes_per_line = 3 * width
             image = cv2.cvtColor(self.current_image, cv2.COLOR_BGR2RGB)
             q_img = QImage(image.data, width, height, bytes_per_line, QImage.Format_RGB888)
+            pixmap = QPixmap.fromImage(q_img)
 
-            # Scale image to fit label while maintaining aspect ratio
-            scaled_pixmap = QPixmap.fromImage(q_img).scaled(
-                self.image_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            # Calculate scaling to fit in the display area while maintaining aspect ratio
+            label_size = self.image_label.size()
+            scaled_pixmap = pixmap.scaled(label_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
 
             self.image_label.setPixmap(scaled_pixmap)
+            logging.info(f"Displayed image: {width}x{height}")
 
     def show_previous_image(self):
         """Show previous image in batch"""
@@ -352,6 +352,7 @@ class CameraOCRGUI(QMainWindow):
             self.current_image = self.batch_images[self.current_image_index]
             self.display_current_image()
             self.update_button_states()
+            self.results_text.append(f"Showing image {self.current_image_index + 1} of {len(self.batch_images)}")
 
     def show_next_image(self):
         """Show next image in batch"""
@@ -360,558 +361,203 @@ class CameraOCRGUI(QMainWindow):
             self.current_image = self.batch_images[self.current_image_index]
             self.display_current_image()
             self.update_button_states()
+            self.results_text.append(f"Showing image {self.current_image_index + 1} of {len(self.batch_images)}")
 
     def update_button_states(self):
-        """Update button states based on current context"""
+        """Update button states based on current application state"""
         has_image = self.current_image is not None
         self.process_button.setEnabled(has_image)
         self.prev_button.setEnabled(self.current_image_index > 0)
         self.next_button.setEnabled(self.current_image_index < len(self.batch_images) - 1)
 
-    def show_processing_dialog(self):
-        """Show a progress dialog during processing"""
-        dialog = QProgressDialog("Processing image...", None, 0, 0, self)
-        dialog.setWindowTitle("Processing")
-        dialog.setWindowModality(Qt.WindowModal)
-        dialog.setMinimumDuration(0)
-        dialog.setValue(0)
-        return dialog
-
-    # In gui/gui.py
-    # Keep only the more advanced version with error handling:
-
     def process_current_image(self):
-        """Process the currently displayed image with worker thread"""
-        if self.current_image is None:
-            return
-
-        # Disable processing button to prevent multiple processing
-        self.process_button.setEnabled(False)
+        """Process the current image with OCR"""
         self.results_text.append("Processing image...")
 
-        try:
-            # Create attractive progress dialog
-            self.progress = QProgressDialog("Initializing OCR engine...", "Cancel", 0, 100, self)
-            self.progress.setWindowTitle("OCR Processing")
-            self.progress.setWindowModality(Qt.WindowModal)
-            self.progress.setAutoClose(False)
-            self.progress.setMinimumDuration(0)
-            self.progress.setMinimumWidth(500)
-            self.progress.setMinimumHeight(120)
+        self.progress_dialog = QProgressDialog("Running OCR...", "Cancel", 0, 100, self)
+        self.progress_dialog.setWindowModality(Qt.WindowModal)
+        self.progress_dialog.setMinimumDuration(0)
+        self.progress_dialog.setValue(0)
+        self.progress_dialog.canceled.connect(self.cancel_processing)
+        self.progress_dialog.show()
 
-            # Make the progress bar more visually interesting
-            self.progress.setStyleSheet("""
-                QProgressDialog {
-                    background-color: #f5f5f5;
-                    border: 1px solid #ddd;
-                    border-radius: 5px;
-                    padding: 5px;
-                }
-                QProgressBar {
-                    border: 1px solid #BDBDBD;
-                    border-radius: 4px;
-                    background-color: #e0e0e0;
-                    text-align: center;
-                    height: 25px;
-                    font-weight: bold;
-                }
-                QProgressBar::chunk {
-                    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
-                                                    stop:0 #2196F3, stop:1 #03A9F4);
-                    border-radius: 3px;
-                }
-                QLabel {
-                    font-size: 13px;
-                    color: #333;
-                    padding: 8px;
-                    font-weight: bold;
-                }
-                QPushButton {
-                    background-color: #f44336;
-                    color: white;
-                    border: none;
-                    padding: 5px 10px;
-                    border-radius: 3px;
-                }
-                QPushButton:hover {
-                    background-color: #d32f2f;
-                }
-            """)
+        self.worker = OCRWorker(self.ocr_processor, self.current_image)
+        self.worker.progressChanged.connect(self.progress_dialog.setValue)
+        self.worker.finished.connect(self.ocr_finished)
+        self.worker.errorOccurred.connect(self.ocr_failed)
+        self.worker.start()
 
-            # Show progress dialog immediately
-            self.progress.show()
-            QApplication.processEvents()  # Force UI update
+    def ocr_finished(self, text, confidence, method, duration):
+        """Handle successful OCR completion"""
+        self.progress_dialog.close()
+        self.processing_duration = duration
 
-            # Check if worker class is available
-            if self.ocr_worker_class is None:
-                raise RuntimeError("OCR worker class not set")
+        # If confidence is 90% or higher, automatically save without confirmation
+        if confidence >= 90.0:
+            self.results_text.append(f"High confidence result ({confidence:.1f}%) - Auto-saving")
+            result_text = f"Detected Text: {text}\nConfidence: {confidence:.2f}%\nMethod: {method}\nProcessing time: {duration:.2f}s"
+            self.results_text.append(result_text)
 
-            # Create worker thread with deep copy of image
-            self.worker = self.ocr_worker_class(self.ocr_processor, self.current_image.copy())
+            # Save the results directly
+            self.handle_ocr_result(text, confidence, method)
+            self.save_final_result(text)
+            self.save_to_history(text, confidence, method)
+        else:
+            # Show confirmation dialog for lower confidence results
+            self.show_result_dialog(text, confidence, method)
 
-            # Connect all signals before starting the thread
-            self.worker.resultReady.connect(self.handle_ocr_result)
-            self.worker.progressUpdate.connect(self.update_progress)
-            self.worker.error.connect(self.handle_ocr_error)
-            self.worker.finished.connect(self.cleanup_worker)
+        # Re-enable buttons
+        self.update_button_states()
 
-            # Add a cancellation option
-            self.progress.canceled.connect(self.cancel_processing)
-
-            # Start worker thread
-            self.worker.start()
-
-        except Exception as e:
-            logging.error(f"Failed to start processing: {str(e)}")
-            self.handle_ocr_error(f"Failed to start processing: {str(e)}")
-            self.cleanup_worker()
-
-    def handle_ocr_result(self, text, confidence, method):
-        """Handle OCR results from worker thread and show confirmation dialog"""
-        # Skip showing results if cancellation is in progress
-        if getattr(self, 'is_user_cancelled', False):
-            return
-
-        # Update results in the main window
-        result_text = f"Detected Text: {text}\n"
-        result_text += f"Confidence: {confidence:.2f}%\n"
-        result_text += f"Method: {method}\n"
-        self.results_text.append(result_text)
-
-        logging.info(f"Processed image: {text} ({confidence:.2f}%)")
-
-        # Show confirmation dialog
-        self.show_confirm_dialog(text, confidence)
-
-    def reset_cancel_flag(self):
-        """Reset the cancellation flag safely"""
-        self.is_user_cancelled = False
-
-    def update_progress(self, value, message):
-        """Update progress dialog with detailed information and animation"""
-        try:
-            # Store a local reference to avoid race conditions
-            progress_dialog = getattr(self, 'progress', None)
-
-            # Skip if no progress dialog
-            if progress_dialog is None:
-                return
-
-            try:
-                # Set value and text
-                progress_dialog.setValue(value)
-                progress_dialog.setLabelText(message)
-
-                # Log important progress points
-                if value % 20 == 0 or value in [0, 100]:
-                    logging.info(f"OCR Progress: {value}% - {message}")
-
-                # Force UI update
-                QApplication.processEvents()
-
-            except RuntimeError:
-                # Dialog was destroyed
-                logging.warning("Progress dialog no longer available")
-
-        except Exception as e:
-            logging.error(f"Error updating progress: {str(e)}")
-
-    def cleanup_worker(self):
-        """Clean up after worker thread completes"""
-        try:
-            # Store local reference first
-            local_worker = self.worker
-            local_progress = getattr(self, 'progress', None)
-
-            # Set class members to None immediately to prevent further updates
-            self.worker = None
-            self.progress = None
-
-            # Wait for worker to finish if it's still running
-            if local_worker and local_worker.isRunning():
-                local_worker.wait(200)  # Wait up to 200ms
-
-            # Close progress dialog last, after all updates should be done
-            if local_progress is not None:
-                try:
-                    local_progress.close()
-                except Exception as e:
-                    logging.error(f"Error closing progress dialog: {str(e)}")
-
-            # Re-enable processing button
-            self.process_button.setEnabled(True)
-
-        except Exception as e:
-            logging.error(f"Error during cleanup: {str(e)}")
-            self.process_button.setEnabled(True)
-
-    def handle_ocr_error(self, error_message):
-        """Handle errors from OCR worker"""
-        # Skip showing errors if cancellation is in progress
-        if getattr(self, 'is_user_cancelled', False):
-            return
-
-        logging.error(f"OCR processing error: {error_message}")
-
-        # Add to UI with formatting
-        formatted_error = f"<span style='color: red; font-weight: bold;'>ERROR: {error_message}</span>"
-        self.results_text.append(formatted_error)
+    def ocr_failed(self, error_message):
+        """Handle OCR failure"""
+        self.progress_dialog.close()
+        self.results_text.append(f"Error during OCR: {error_message}")
 
     def cancel_processing(self):
-        """Cancel current processing job safely"""
-        # Check if cancellation is already in progress to avoid duplicate logging
-        if getattr(self, 'is_user_cancelled', False):
-            return  # Already cancelling, don't do it again
+        """Cancel the current OCR operation"""
+        if self.worker and self.worker.isRunning():
+            self.worker.terminate()
+            self.worker.wait()
+        self.results_text.append("OCR processing canceled")
 
-        # Set cancellation flag immediately
-        self.is_user_cancelled = True
-        logging.info("OCR processing canceled by user")
+    def reset_cancel_flag(self):
+        """Reset the cancellation flag"""
+        self.is_user_cancelled = False
 
-        try:
-            # Cache references to worker and progress
-            local_worker = getattr(self, 'worker', None)
-            local_progress = getattr(self, 'progress', None)
-
-            # Clear references FIRST
-            self.worker = None
-            self.progress = None
-
-            # Add cancellation message to results
-            self.results_text.append("Processing canceled by user")
-
-            # Close progress dialog if it exists
-            if local_progress is not None:
-                try:
-                    local_progress.close()
-                except Exception as e:
-                    logging.error(f"Error closing progress dialog: {str(e)}")
-
-            # Stop worker thread
-            if local_worker is not None and local_worker.isRunning():
-                # Set running flag to False
-                local_worker.running = False
-
-                # Disconnect signals - handle each separately with try/except
-                for signal_name in ['resultReady', 'progressUpdate', 'error', 'finished']:
-                    try:
-                        getattr(local_worker, signal_name).disconnect()
-                    except (TypeError, RuntimeError):
-                        pass
-
-                # Gracefully wait for thread to finish
-                if not local_worker.wait(300):  # Wait 300ms for thread to finish
-                    local_worker.quit()  # Use quit instead of terminate
-        except Exception as e:
-            logging.error(f"Error during cancellation: {str(e)}")
-        finally:
-            # Always re-enable the process button
-            self.process_button.setEnabled(True)
-
-            # Reset cancellation flag after a delay
-            QTimer.singleShot(500, self.reset_cancel_flag)
-
-    def process_batch(self):
-        """Process all images in the batch"""
-        if not self.batch_images:
-            return
-
-        try:
-            self.results_text.clear()
-            self.results_text.append("Processing batch of images...\n")
-
-            # Capture console output
-            console_capture = ConsoleCapture(self.log_text)
-            sys.stdout = console_capture
-            sys.stderr = console_capture
-
-            for i, image in enumerate(self.batch_images):
-                self.results_text.append(f"\nProcessing image {i + 1}/3:")
-                text, confidence, method = self.ocr_processor.recognize_text(image)
-
-                result_text = f"Image {i + 1} Results:\n"
-                result_text += f"Detected Text: {text}\n"
-                result_text += f"Confidence: {confidence:.2f}%\n"
-                result_text += f"Method: {method}\n"
-                result_text += "-" * 40 + "\n"
-
-                self.results_text.append(result_text)
-
-            self.results_text.append("\nBatch processing complete!")
-
-        except Exception as e:
-            logging.error(f"Batch processing error: {str(e)}")
-            self.results_text.append(f"Error: {str(e)}")
-        finally:
-            # Restore original stdout/stderr
-            if 'console_capture' in locals():
-                sys.stdout = console_capture.original_stdout
-                sys.stderr = console_capture.original_stderr
-
-    def start_camera(self):
-        """Initialize and start the camera preview"""
-        try:
-            if self.camera.cap is None or not self.camera.cap.isOpened():
-                if not self.camera.initialize():
-                    raise Exception("Failed to initialize camera")
-
-            # Test camera capture
-            ret, frame = self.camera.cap.read()
-            if not ret or frame is None:
-                raise Exception("Camera test capture failed")
-
-            # Start preview timer (30 FPS)
-            if self.preview_timer.isActive():
-                self.preview_timer.stop()
-            self.preview_timer.start(33)
-
-            # Start processing timer (1 process every 3 seconds)
-            if self.process_timer.isActive():
-                self.process_timer.stop()
-            self.process_timer.start(3000)
-
-            logging.info("Camera started successfully")
-
-        except Exception as e:
-            logging.error(f"Camera initialization error: {str(e)}")
-            QMessageBox.critical(self, "Error", f"Failed to start camera: {str(e)}")
-            self.close()
-
-    def update_preview(self):
-        """Update the camera preview"""
-        if not self.camera.cap or not self.camera.cap.isOpened():
-            self.preview_timer.stop()
-            return
-
-        try:
-            ret, frame = self.camera.cap.read()
-            if not ret or frame is None:
-                self.preview_timer.stop()
-                self.start_camera()
-                return
-
-            # Convert frame to RGB for Qt
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            h, w, ch = rgb_frame.shape
-            bytes_per_line = ch * w
-
-            # Convert to QImage and scale
-            image = QImage(rgb_frame.data.tobytes(), w, h, bytes_per_line, QImage.Format_RGB888)
-            scaled_pixmap = QPixmap.fromImage(image).scaled(
-                self.preview_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-
-            self.preview_label.setPixmap(scaled_pixmap)
-            self.update_camera_info(frame)
-
-        except Exception as e:
-            logging.error(f"Preview update error: {str(e)}")
-            self.preview_timer.stop()
-
-    def process_frame(self):
-        """Process current frame with OCR"""
-        if self.is_processing:
-            return
-
-        try:
-            self.is_processing = True
-
-            if self.camera.cap is None or not self.camera.cap.isOpened():
-                raise Exception("Camera not available")
-
-            # Update status
-            self.results_text.append("Processing frame...")
-
-            # Capture and process frame
-            frame = self.camera.capture_image()
-            if frame is not None:
-                text, confidence, method = self.ocr_processor.recognize_text(frame)
-
-                # Update results display
-                result_text = f"Detected Text: {text}\n"
-                result_text += f"Confidence: {confidence:.2f}%\n"
-                result_text += f"Method: {method}\n"
-                result_text += f"\nHistory:\n"
-
-                # Add history from results directory
-                self.add_history_to_results(result_text)
-
-                logging.info(f"Processed frame: {text} ({confidence:.2f}%)")
-            else:
-                self.results_text.append("Failed to capture frame")
-
-        except Exception as e:
-            logging.error(f"Processing error: {str(e)}")
-            self.results_text.append(f"Error: {str(e)}")
-        finally:
-            self.is_processing = False
-
-    def update_camera_info(self, frame):
-        """Update camera information display"""
-        info = f"Resolution: {frame.shape[1]}x{frame.shape[0]}\n"
-        info += f"Camera Index: {self.camera.camera_index}\n"
-        info += f"FPS: {self.camera.cap.get(cv2.CAP_PROP_FPS):.1f}"
-        self.info_text.setText(info)
-
-    def add_history_to_results(self, result_text):
-        """Add history from results directory to display"""
-        try:
-            results_dir = "results"
-            if os.path.exists(results_dir):
-                files = sorted(os.listdir(results_dir), reverse=True)[:5]
-                for file in files:
-                    if file.startswith("result_") and file.endswith(".txt"):
-                        try:
-                            with open(os.path.join(results_dir, file), 'r') as f:
-                                result_text += f"\n--- {file} ---\n"
-                                result_text += f.read()
-                        except Exception as e:
-                            logging.error(f"Error reading history file {file}: {str(e)}")
-
-            self.results_text.setText(result_text)
-        except Exception as e:
-            logging.error(f"Error updating history: {str(e)}")
-
-    def stop_camera(self):
-        """Stop camera preview and processing"""
-        self.preview_timer.stop()
-        self.process_timer.stop()
-        if self.camera:
-            self.camera.release()
-        self.camera_active = False
-
-    def closeEvent(self, event):
-        """Clean up resources when closing"""
-        try:
-            # Only stop camera preview timer if it exists
-            if hasattr(self, 'preview_timer') and self.preview_timer.isActive():
-                self.preview_timer.stop()
-
-            # Only stop process timer if it exists
-            if hasattr(self, 'process_timer') and self.process_timer.isActive():
-                self.process_timer.stop()
-
-            # Release camera resources
-            if hasattr(self, 'camera') and self.camera is not None:
-                self.camera.release()
-
-            logging.info("Application closed cleanly")
-            event.accept()
-        except Exception as e:
-            logging.error(f"Error during cleanup: {str(e)}")
-            event.accept()
-
-    def show_confirm_dialog(self, text, confidence):
-        """Show a dialog to confirm or modify the OCR result"""
-        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton, QLabel
-
+    def show_result_dialog(self, text, confidence, method):
+        """Show dialog with OCR results"""
         dialog = QDialog(self)
         dialog.setWindowTitle("Confirm OCR Result")
         dialog.setMinimumWidth(400)
-        dialog.setStyleSheet("""
-            QDialog { background-color: #f5f5f5; border-radius: 8px; }
-            QLabel { font-size: 14px; padding: 10px; }
-            QPushButton { min-width: 120px; padding: 10px; border-radius: 4px; font-weight: bold; }
-            QLineEdit { padding: 10px; font-size: 16px; border: 1px solid #ddd; border-radius: 4px; }
-            #resultLabel { font-size: 24px; font-weight: bold; }
-        """)
 
-        layout = QVBoxLayout()
+        layout = QVBoxLayout(dialog)
 
-        # Header and result display
-        label = QLabel("Is this result correct?")
+        info_label = QLabel(f"Confidence: {confidence:.1f}%\nMethod: {method}")
+        info_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(info_label)
+
         result_label = QLabel(text)
-        result_label.setObjectName("resultLabel")
         result_label.setAlignment(Qt.AlignCenter)
-        conf_label = QLabel(f"Confidence: {confidence:.1f}%")
-        conf_label.setAlignment(Qt.AlignCenter)
-
-        layout.addWidget(label)
+        result_label.setStyleSheet("font-size: 18px; font-weight: bold;")
         layout.addWidget(result_label)
-        layout.addWidget(conf_label)
 
-        # Buttons for confirmation
+        edit_line = QLineEdit(text)
+        edit_line.setVisible(False)
+        layout.addWidget(edit_line)
+
         button_layout = QHBoxLayout()
-        confirm_button = QPushButton("Correct")
-        confirm_button.setStyleSheet("background-color: #4CAF50; color: white;")
-        edit_button = QPushButton("Incorrect")
-        edit_button.setStyleSheet("background-color: #F44336; color: white;")
+        correct_btn = QPushButton("Correct")
+        incorrect_btn = QPushButton("Incorrect")
+        save_btn = QPushButton("Save Correction")
+        save_btn.setVisible(False)
 
-        button_layout.addWidget(confirm_button)
-        button_layout.addWidget(edit_button)
+        button_layout.addWidget(correct_btn)
+        button_layout.addWidget(incorrect_btn)
         layout.addLayout(button_layout)
+        layout.addWidget(save_btn)
 
-        # Hidden correction controls
-        text_edit = QLineEdit(text)
-        text_edit.setVisible(False)
-        save_button = QPushButton("Save Correction")
-        save_button.setStyleSheet("background-color: #2196F3; color: white;")
-        save_button.setVisible(False)
-
-        layout.addWidget(text_edit)
-        layout.addWidget(save_button)
-        dialog.setLayout(layout)
-
-        # Button event handlers
-        def on_confirm():
-            logging.info(f"Result confirmed by user: {text}")
-            self.save_final_result(text)
+        def confirm():
+            self.handle_ocr_result(text, confidence, method)
+            self.save_to_history(text, confidence, method)
             dialog.accept()
 
-        def on_edit():
-            # Switch to editing mode
+        def edit():
             result_label.setVisible(False)
-            conf_label.setVisible(False)
-            confirm_button.setVisible(False)
-            edit_button.setVisible(False)
-            text_edit.setVisible(True)
-            save_button.setVisible(True)
-            label.setText("Please correct the result:")
+            correct_btn.setVisible(False)
+            incorrect_btn.setVisible(False)
+            edit_line.setVisible(True)
+            save_btn.setVisible(True)
 
-        def on_save_correction():
-            corrected_text = text_edit.text().strip()
-            logging.info(f"Result corrected by user: {text} -> {corrected_text}")
-            self.save_final_result(corrected_text)
+        def save():
+            new_text = edit_line.text()
+            self.handle_ocr_result(new_text, confidence, method)
+            self.save_to_history(new_text, confidence, method)
             dialog.accept()
 
-        # Connect signals
-        confirm_button.clicked.connect(on_confirm)
-        edit_button.clicked.connect(on_edit)
-        save_button.clicked.connect(on_save_correction)
+        correct_btn.clicked.connect(confirm)
+        incorrect_btn.clicked.connect(edit)
+        save_btn.clicked.connect(save)
 
-        # Execute dialog
         dialog.exec_()
+
+    def handle_ocr_result(self, text, confidence, method):
+        """Process OCR result and update UI"""
+        result = f"Detected Text: {text}\nConfidence: {confidence:.2f}%\nMethod: {method}"
+        self.results_text.append(result)
+        logging.info(result)
+
+    def save_to_history(self, final_text, confidence, method):
+        """Save OCR result to history"""
+        try:
+            directory = "results"
+            os.makedirs(directory, exist_ok=True)
+            timestamp = time.strftime("%Y%m%d-%H%M%S")
+            safe_text = ''.join(c for c in final_text if c.isalnum() or c in ' _-').strip().replace(' ', '_')
+            filename = f"{safe_text}_{timestamp}.txt" if safe_text else f"scan_{timestamp}.txt"
+            path = os.path.join(directory, filename)
+
+            with open(path, 'w') as f:
+                f.write(f"Text: {final_text}\n")
+                f.write(f"Confidence: {confidence:.2f}%\n")
+                f.write(f"Method: {method}\n")
+                f.write(f"Total processing time: {int(self.processing_duration)} seconds\n")
+
+            self.history_text.append(f"Saved: {final_text} -> {filename}")
+        except Exception as e:
+            self.history_text.append(f" Error saving: {str(e)}")
+            logging.error(f"Error saving result: {str(e)}")
 
     def save_final_result(self, final_text):
         """Save the final confirmed or corrected result to a separate file"""
         try:
-            # Create results directory if it doesn't exist
-            results_dir = "result_scan"
-            os.makedirs(results_dir, exist_ok=True)
-
-            # Create a filename based on the detected text and timestamp
-            # Replace any invalid filename characters
-            safe_text = ''.join(c for c in final_text if c.isalnum() or c in ' _-')
-            safe_text = safe_text.strip().replace(' ', '_')
-
+            directory = "results"
+            os.makedirs(directory, exist_ok=True)
             timestamp = time.strftime("%Y%m%d-%H%M%S")
 
-            # Use detected text in filename if available, otherwise use timestamp only
-            if safe_text:
-                result_file = os.path.join(results_dir, f"{safe_text}_{timestamp}.txt")
-            else:
-                result_file = os.path.join(results_dir, f"scan_{timestamp}.txt")
+            # Create a safe filename from text
+            safe_text = ''.join(c for c in final_text if c.isalnum() or c in ' _-').strip()
+            safe_text = safe_text.replace(' ', '_')[:30]  # Limit length
 
-            # Write the result to file
-            with open(result_file, "w") as f:
-                f.write(f"Final Result: {final_text}\n")
-                f.write(f"Confidence: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-                f.write(f"Timestamp: {timestamp}\n")
+            if safe_text:
+                filename = f"{safe_text}_{timestamp}.txt"
+            else:
+                filename = f"scan_{timestamp}.txt"
+
+            result_file = os.path.join(directory, filename)
+
+            with open(result_file, 'w') as f:
+                f.write(f"Text: {final_text}\n")
+
+                # Add additional information if available
+                if hasattr(self, 'processing_duration') and self.processing_duration:
+                    f.write(f"Processing time: {self.processing_duration:.2f}s\n")
+
+                # Add image source if available
+                if hasattr(self, 'last_image_path') and self.last_image_path:
+                    f.write(f"Source image: {self.last_image_path}\n")
 
             logging.info(f"Final result saved to {result_file}")
-
-            # Show confirmation in results area
-            self.results_text.append(f"\n✅ Result saved: {final_text}")
-            self.results_text.append(f"📄 Saved to: {result_file}")
+            self.results_text.append(f" Saved to: {result_file}")
 
         except Exception as e:
             logging.error(f"Error saving final result: {str(e)}")
-            self.results_text.append(f"❌ Error saving result: {str(e)}")
+            self.results_text.append(f" Error saving result: {str(e)}")
+
+    def closeEvent(self, event):
+        """Clean up resources when closing the application"""
+        try:
+            # Stop any running workers
+            if self.worker and self.worker.isRunning():
+                self.worker.terminate()
+                self.worker.wait()
+
+            # Release camera if it exists
+            if hasattr(self.camera, 'release'):
+                self.camera.release()
+
+            logging.info("Application closed")
+        except Exception as e:
+            logging.error(f"Error during shutdown: {str(e)}")
+
+        event.accept()

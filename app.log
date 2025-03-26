@@ -628,3 +628,80 @@
 2025-03-26 17:29:23,820 - INFO - Starting application
 2025-03-26 17:29:23,820 - INFO - Initializing components
 2025-03-26 17:29:26,145 - INFO - Application ready
+2025-03-26 17:33:26,629 - INFO - Starting application
+2025-03-26 17:33:26,630 - INFO - Initializing components
+2025-03-26 17:33:28,900 - INFO - Application ready
+2025-03-26 18:54:27,159 - INFO - Starting application
+2025-03-26 18:54:27,160 - INFO - Initializing components
+2025-03-26 18:54:29,388 - INFO - Application ready
+2025-03-26 18:54:47,964 - INFO - Displayed image: 1920x1080
+2025-03-26 18:55:14,266 - INFO - Detected Text: JD R542777
+Confidence: 98.30%
+Method: easyocr_None_0deg
+2025-03-26 18:56:00,224 - INFO - Starting application
+2025-03-26 18:56:00,224 - INFO - Initializing components
+2025-03-26 18:56:02,406 - INFO - Application ready
+2025-03-26 18:56:09,777 - INFO - Displayed image: 1920x1080
+2025-03-26 18:56:26,424 - INFO - Detected Text: JD R542777
+Confidence: 98.30%
+Method: easyocr_None_0deg
+2025-03-26 18:57:38,037 - INFO - Application closed
+2025-03-26 19:03:13,764 - INFO - Starting application
+2025-03-26 19:03:13,765 - INFO - Initializing components
+2025-03-26 19:03:15,986 - INFO - Application ready
+2025-03-26 19:03:31,057 - INFO - Switched to Camera 1
+2025-03-26 19:03:33,156 - INFO - Displayed image: 1280x720
+2025-03-26 19:03:41,764 - INFO - Switched to Camera 0
+2025-03-26 19:04:27,143 - INFO - Displayed image: 1920x1080
+2025-03-26 19:04:36,406 - INFO - Result saved to results\JD_R642777_20250326-190436.txt
+2025-03-26 19:04:54,766 - INFO - Application closed
+2025-03-26 19:14:58,145 - INFO - Starting application
+2025-03-26 19:14:58,145 - INFO - Initializing components
+2025-03-26 19:15:00,401 - INFO - Application ready
+2025-03-26 19:15:08,276 - INFO - Displayed image: 1920x1080
+2025-03-26 19:15:19,148 - INFO - Detected Text: JD R642777
+Confidence: 98.30%
+Method: easyocr_None_0deg
+2025-03-26 19:15:19,148 - INFO - Final result saved to results\JD_R642777_20250326-191519.txt
+2025-03-26 19:15:30,304 - INFO - Application closed
+2025-03-26 19:21:12,716 - INFO - Starting application
+2025-03-26 19:21:12,717 - INFO - Initializing components
+2025-03-26 19:21:14,955 - INFO - Application ready
+2025-03-26 19:22:53,811 - INFO - Displayed image: 1920x1080
+2025-03-26 19:23:02,650 - INFO - Detected Text: JD R642777
+Confidence: 98.30%
+Method: easyocr_None_0deg
+2025-03-26 19:23:02,652 - INFO - Final result saved to results\JD_R642777_20250326-192302.txt
+2025-03-26 19:24:38,646 - INFO - Starting application
+2025-03-26 19:24:38,646 - INFO - Initializing components
+2025-03-26 19:24:42,019 - INFO - Application ready
+2025-03-26 19:25:26,549 - INFO - Application closed
+2025-03-27 00:16:37,077 - INFO - Starting application
+2025-03-27 00:16:37,078 - INFO - Initializing components
+2025-03-27 00:16:39,095 - INFO - Application ready
+2025-03-27 00:17:44,123 - INFO - Starting application
+2025-03-27 00:17:44,124 - INFO - Initializing components
+2025-03-27 00:17:46,023 - INFO - Application ready
+2025-03-27 00:17:54,835 - INFO - Application closed
+2025-03-27 00:21:36,158 - INFO - Starting application
+2025-03-27 00:21:36,158 - INFO - Initializing components
+2025-03-27 00:21:38,132 - INFO - Application ready
+2025-03-27 00:22:44,036 - INFO - Application closed
+2025-03-27 00:31:50,560 - INFO - Starting application
+2025-03-27 00:31:50,561 - INFO - Initializing components
+2025-03-27 00:31:52,582 - INFO - Application ready
+2025-03-27 00:32:00,433 - INFO - Displayed image: 1920x1080
+2025-03-27 00:32:08,916 - INFO - Selected camera changed to index 1
+2025-03-27 00:32:19,525 - INFO - Detected Text: JD R642777
+Confidence: 98.30%
+Method: easyocr_None_0deg
+2025-03-27 00:32:19,525 - INFO - Final result saved to results\JD_R642777_20250327-003219.txt
+2025-03-27 00:37:55,504 - INFO - Starting application
+2025-03-27 00:37:55,504 - INFO - Initializing components
+2025-03-27 00:37:57,541 - INFO - Application ready
+2025-03-27 00:38:06,081 - INFO - Displayed image: 1920x1080
+2025-03-27 00:38:16,902 - INFO - Detected Text: JD R642777
+Confidence: 98.30%
+Method: easyocr_None_0deg
+2025-03-27 00:38:16,902 - INFO - Final result saved to results\JD_R642777_20250327-003816.txt
+2025-03-27 00:38:42,009 - INFO - Application closed

@@ -1,0 +1,108 @@
+/* Main Window Style */
+QMainWindow {
+    background-color: #f0f0f0;
+    color: #000;
+}
+
+/* Boutons généraux */
+QPushButton {
+    background-color: #2196F3;
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 4px;
+    min-width: 100px;
+    font-weight: bold;
+}
+
+QPushButton:hover {
+    background-color: #1976D2;
+}
+
+QPushButton:disabled {
+    background-color: #BDBDBD;
+}
+
+/* Bouton spécifique 'Choose Camera' */
+#choose_camera_button {
+    background-color: #9C27B0;
+    color: white;
+}
+
+#choose_camera_button:hover {
+    background-color: #7B1FA2;
+}
+
+/* Labels */
+QLabel {
+    font-size: 12px;
+    color: #333;
+}
+
+/* Zones de texte */
+QTextEdit {
+    border: 1px solid #BDBDBD;
+    border-radius: 4px;
+    padding: 4px;
+    background-color: white;
+    color: black;
+}
+
+/* Label pour l'affichage des images */
+#image_label {
+    background-color: #333333;
+    border: 1px solid #555555;
+    border-radius: 4px;
+}
+
+/* Style du dialogue de progression (OCR) */
+QProgressDialog {
+    background-color: #f5f5f5;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    padding: 5px;
+}
+
+QProgressBar {
+    border: 1px solid #BDBDBD;
+    border-radius: 4px;
+    background-color: #e0e0e0;
+    text-align: center;
+    height: 25px;
+    font-weight: bold;
+}
+
+QProgressBar::chunk {
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #2196F3, stop:1 #03A9F4);
+    border-radius: 3px;
+}
+
+/* Dialogues généraux (confirmation, choix caméra...) */
+QDialog {
+    background-color: #f5f5f5;
+    border-radius: 8px;
+}
+
+QDialog QLabel {
+    font-size: 14px;
+    padding: 10px;
+}
+
+QDialog QPushButton {
+    min-width: 100px;
+    padding: 8px;
+    border-radius: 4px;
+    font-weight: bold;
+}
+
+QDialog QComboBox, QDialog QLineEdit {
+    padding: 8px;
+    font-size: 14px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+}
+
+#resultLabel {
+    font-size: 24px;
+    font-weight: bold;
+}
