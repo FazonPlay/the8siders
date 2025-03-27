@@ -22,6 +22,8 @@ class OCRProcessor:
             self.easyocr_reader = easyocr.Reader(['en'])
             print("EasyOCR initialized")
 
+        print(f"Available OCR engines: EasyOCR={'✓' if EASYOCR_AVAILABLE else '✗'}")
+
     def preprocess_image(self, image, method=None, angle=0):
         img = image.copy()
 
@@ -185,7 +187,7 @@ class OCRProcessor:
         else:
             rotated_image = self.rotate_image(image, angle)
 
-        preprocessing_methods = [None]
+        preprocessing_methods = [None, "standard"]
         all_results = []
 
         for method in preprocessing_methods:
@@ -205,7 +207,7 @@ class OCRProcessor:
     def recognize_text(self, image):
         total_start_time = time.time()
 
-        angles = [0, 90, 180, 270]
+        angles = [0, 45, 90, 135, 180, 235, 270]
         orientation_results = []
 
         GOOD_CONFIDENCE_THRESHOLD = 70
@@ -238,6 +240,35 @@ class OCRProcessor:
                 image = self.rotate_image(image, best_angle)
 
         all_results = []
+        preprocessing_methods = [None, "standard", "jd_format", "metal_curved"]
+
+        print("Processing with original image...")
+        for method in preprocessing_methods:
+            method_name = method if method else "default"
+            print(f"Trying preprocessing method: {method_name}")
+
+            result = self.recognize_with_easyocr(image, method, best_angle)
+            if result[0]:
+                print(f"✓ {method_name}: {result[0]} ({result[1]:.1f}%)")
+                all_results.append(result)
+
+        if not all_results or max((result[1] for result in all_results), default=0) < 70:
+            print("Trying enhanced contrast image...")
+            enhanced_image = self.enhance_contrast_for_text(image)
+
+            debug_filename = f"{self.debug_dir}/debug_{best_angle}deg_enhanced_contrast.jpg"
+            cv2.imwrite(debug_filename, enhanced_image)
+            print(f"Debug image saved: {debug_filename}")
+            for method in preprocessing_methods[:4]:
+                method_name = method if method else "default"
+                print(f"Trying preprocessing method: {method_name} (enhanced)")
+
+
+                result = self.recognize_with_easyocr(enhanced_image, method, best_angle)
+                if result[0]:
+                    print(f"✓ {method_name} (enhanced): {result[0]} ({result[1]:.1f}%)")
+                    all_results.append(result)
+
         print(f"Total valid results: {len(all_results)}")
         print(f"Processing time: {time.time() - total_start_time:.3f}s")
 
