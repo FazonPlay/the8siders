@@ -1,136 +1,147 @@
+import sys
+import logging
 import os
-import time
-import cv2
-import argparse
-import numpy as np
+from PyQt5.QtWidgets import QApplication, QMessageBox
+from PyQt5.QtCore import QThread, pyqtSignal
+from gui.gui import CameraOCRGUI, QTextEditLogger
 from image_capture.camera import Camera
 from ocr_processing.text_recognition import OCRProcessor
 
 
-def setup_directories():
-    """Create necessary directories for the project"""
-    dirs = ["test_images", "results", "debug_images"]
-    for directory in dirs:
-        os.makedirs(directory, exist_ok=True)
-    return dirs
+class OCRWorker(QThread):
+    resultReady = pyqtSignal(object, float, str)
+    progressUpdate = pyqtSignal(int, str)
+    progressChanged = pyqtSignal(int)
+    finished = pyqtSignal()
+    error = pyqtSignal(str)
+    errorOccurred = pyqtSignal(str)
 
+    def __init__(self, ocr_processor, image):
+        super().__init__()
+        self.ocr_processor = ocr_processor
+        if image is not None:
+            self.image = image.copy()
+        else:
+            self.image = None
+            logging.error("Null image provided to OCRWorker")
 
-def process_image(image_path, ocr_processor, display=True):
-    """Process a single image with OCR"""
-    # Read the image
-    image = cv2.imread(image_path)
-    if image is None:
-        print(f"Error: Could not read image from {image_path}")
-        return None
+        #program phases
+    def run(self):
+        try:
+            #initial phase
+            self.progressUpdate.emit(0, "Starting OCR engine...")
+            self.progressChanged.emit(0)
+            self.msleep(100)
 
-    # Recognize text
-    print(f"Processing image: {image_path}")
-    text, confidence, method = ocr_processor.recognize_text(image)
+            #orientation testing phase
+            self.progressUpdate.emit(20, "Testing multiple image orientations...")
+            self.progressChanged.emit(20)
+            self.msleep(100)
 
-    # Save result
-    result_file = ocr_processor.save_result(text, confidence, method, image_path)
+            #preprocessing phase
+            self.progressUpdate.emit(40, "Removing noise artifacts...")
+            self.progressChanged.emit(40)
+            self.msleep(100)
 
-    # Print results
-    print("\n===== OCR Results =====")
-    print(f"Text: {text}")
-    print(f"Confidence: {confidence:.2f}%")
-    print(f"Method: {method}")
-    print(f"Results saved to: {result_file}")
+            #OCR phase
+            self.progressUpdate.emit(60, "Applying specialized JD format detection...")
+            self.progressChanged.emit(60)
+            self.msleep(100)
 
-    # Display the image with detected text if requested
-    if display:
-        # Create a copy of the image for display
-        display_img = image.copy()
+            #safety check for image and processor
+            if self.image is None:
+                raise ValueError("No image data available")
+            if self.ocr_processor is None:
+                raise ValueError("OCR processor not available")
 
-        # Add text at the bottom of the image
-        h, w = display_img.shape[:2]
-        cv2.rectangle(display_img, (0, h - 80), (w, h), (0, 0, 0), -1)
-        cv2.putText(display_img, f"Text: {text}", (10, h - 60),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-        cv2.putText(display_img, f"Confidence: {confidence:.2f}%", (10, h - 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            text, confidence, method = self.ocr_processor.recognize_text(self.image)
 
-        # Display the image
-        cv2.imshow("OCR Result", display_img)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
+            #post-processing phase
+            self.progressUpdate.emit(80, "Compiling results from all methods...")
+            self.progressChanged.emit(80)
+            self.msleep(100)
 
-    return text, confidence, method
+            #results
+            self.resultReady.emit(text, confidence, method)
+            self.msleep(300)
+            self.progressUpdate.emit(100, "Processing complete!")
+            self.progressChanged.emit(100)
 
+        except Exception as e:
+            logging.error(f"OCR Worker error: {str(e)}")
+            self.error.emit(str(e))
+            self.errorOccurred.emit(str(e))
+        finally:
+            logging.info("OCR Worker finished")
+            self.finished.emit()
 
-def capture_and_process(camera, ocr_processor, num_captures=3, display=True):
-    """Capture multiple images and process them with OCR"""
-    # Capture multiple images
-    print(f"Capturing {num_captures} images...")
-    images, image_paths = camera.capture_multiple(num_images=num_captures)
+def setup_logging(gui_log_widget=None):
+    #prevent duplicate messages
+    root = logging.getLogger()
+    for handler in root.handlers[:]:
+        root.removeHandler(handler)
 
-    # Process each image
-    results = []
-    for img_path in image_paths:
-        result = process_image(img_path, ocr_processor, display=False)
-        if result:
-            results.append(result + (img_path,))
+    #create log directory if not exist
+    log_dir = os.path.dirname('app.log')
+    if log_dir and not os.path.exists(log_dir):
+        os.makedirs(log_dir, exist_ok=True)
 
-    # Find the best result based on confidence
-    if results:
-        best_result = max(results, key=lambda x: x[1])
-        text, confidence, method, best_image_path = best_result
+    handlers = [
+        logging.FileHandler('app.log'),
+        logging.StreamHandler(sys.stdout)
+    ]
 
-        print("\n===== Best OCR Result =====")
-        print(f"Text: {text}")
-        print(f"Confidence: {confidence:.2f}%")
-        print(f"Method: {method}")
-        print(f"Source: {best_image_path}")
+    if gui_log_widget:
+        handlers.append(QTextEditLogger(gui_log_widget))
 
-        # Display the best result if requested
-        if display:
-            best_image = cv2.imread(best_image_path)
-
-            # Add text at the bottom of the image
-            h, w = best_image.shape[:2]
-            cv2.rectangle(best_image, (0, h - 80), (w, h), (0, 0, 0), -1)
-            cv2.putText(best_image, f"Text: {text}", (10, h - 60),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-            cv2.putText(best_image, f"Confidence: {confidence:.2f}%", (10, h - 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-
-            # Display the image
-            cv2.imshow("Best OCR Result", best_image)
-            cv2.waitKey(0)
-            cv2.destroyAllWindows()
-
-        return text, confidence, method
-
-    print("No valid OCR results found.")
-    return None, 0, "no_results"
-
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=handlers
+    )
 
 def main():
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description="OCR System for Engraved Plates")
-    parser.add_argument("--image", help="Path to image file to process (optional)")
-    parser.add_argument("--no-display", action="store_true", help="Don't display results visually")
-    parser.add_argument("--captures", type=int, default=3, help="Number of images to capture (default: 3)")
-    args = parser.parse_args()
-    # Create necessary directories
-    setup_directories()
+    #catch unhandled exceptions
+    def exception_hook(exctype, value, traceback):
+        logging.error(f"Unhandled exception: {exctype.__name__}: {value}")
+        sys.__excepthook__(exctype, value, traceback)
 
-    # Initialize OCR processor
-    ocr_processor = OCRProcessor()
+    sys.excepthook = exception_hook
 
-    # Process a single image or capture from camera
-    if args.image:
-        # Process a specific image file
-        process_image(args.image, ocr_processor, display=not args.no_display)
-    else:
-        # Capture and process from camera
+    app = QApplication(sys.argv)
+    app.setStyle('Fusion')
+
+    try:
+        #create components
         camera = Camera()
+        ocr_processor = OCRProcessor()
+        gui = CameraOCRGUI(camera, ocr_processor)
+
+        gui.ocr_worker_class = OCRWorker
+
+        setup_logging(gui.log_text)
+        logging.info("Starting application")
+        logging.info("Initializing components")
+
+        #initialize camera
         try:
-            capture_and_process(camera, ocr_processor, num_captures=args.captures,
-                                display=not args.no_display)
-        finally:
-            camera.release()
+            if hasattr(camera, 'initialize_camera'):
+                camera.initialize_camera()
+            elif hasattr(camera, 'initialize'):
+                if not camera.initialize():
+                    logging.warning("Camera initialization failed, will try to initialize on demand")
+        except Exception as camera_error:
+            logging.warning(f"Camera initialization error: {camera_error}. Will initialize on demand.")
+        gui.show()
+        logging.info("Application ready")
 
+        return app.exec_()
 
-if __name__ == "__main__":
-    main()
+    except Exception as e:
+        error_msg = f"Fatal error: {str(e)}"
+        logging.error(error_msg)
+        QMessageBox.critical(None, "Error", error_msg)
+        return 1
+
+if __name__ == '__main__':
+    sys.exit(main())

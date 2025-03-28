@@ -2,19 +2,14 @@ import cv2
 import numpy as np
 import os
 import time
-from PIL import Image
 import re
-import difflib
 
-# Try to import EasyOCR
 try:
     import easyocr
-
     EASYOCR_AVAILABLE = True
 except ImportError:
     EASYOCR_AVAILABLE = False
-    raise ImportError("EasyOCR is required for this script. Install with: pip install easyocr")
-
+    print("EasyOCR not available")
 
 class OCRProcessor:
     def __init__(self):
@@ -23,210 +18,269 @@ class OCRProcessor:
         self.debug_dir = "debug_images"
         os.makedirs(self.debug_dir, exist_ok=True)
 
-        # Initialize EasyOCR
         if EASYOCR_AVAILABLE:
             self.easyocr_reader = easyocr.Reader(['en'])
-        else:
-            raise RuntimeError("EasyOCR is not available. Please install it with: pip install easyocr")
+            print("EasyOCR initialized")
 
-    def preprocess_image_standard(self, image):
-        """Standard preprocessing pipeline for OCR"""
-        # Make a copy to avoid modifying the original
+        print(f"Available OCR engines: EasyOCR={'✓' if EASYOCR_AVAILABLE else '✗'}")
+
+    def preprocess_image(self, image, method=None, angle=0):
         img = image.copy()
 
-        # Convert to grayscale
+        angle_text = f"{angle}deg_" if angle != 0 else ""
+        method_name = method if method else "default"
+        debug_filename = f"{self.debug_dir}/debug_{angle_text}{method_name}.jpg"
+
+        if method == "standard":
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            processed = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY, 11, 2)
+        elif method == "jd_format":
+            img = cv2.resize(img, None, fx=2.5, fy=2.5, interpolation=cv2.INTER_CUBIC)
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+            enhanced = clahe.apply(gray)
+            kernel = np.array([[-1, -1, -1], [-1, 9, -1], [-1, -1, -1]])
+            sharpened = cv2.filter2D(enhanced, -1, kernel)
+            _, processed = cv2.threshold(sharpened, 150, 255, cv2.THRESH_BINARY)
+        elif method == "metal_curved":
+            img = cv2.resize(img, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            clahe = cv2.createCLAHE(clipLimit=3.5, tileGridSize=(4, 4))
+            enhanced = clahe.apply(gray)
+            _, mask = cv2.threshold(enhanced, 220, 255, cv2.THRESH_BINARY)
+            mask = cv2.dilate(mask, np.ones((5, 5), np.uint8))
+            enhanced_no_glare = cv2.inpaint(enhanced, mask, 5, cv2.INPAINT_TELEA)
+            kernel_sharpen = np.array([
+                [-1, -1, -1],
+                [-1,  9, -1],
+                [-1, -1, -1]
+            ])
+            sharpened = cv2.filter2D(enhanced_no_glare, -1, kernel_sharpen)
+            _, processed = cv2.threshold(sharpened, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        else:
+            processed = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+        cv2.imwrite(debug_filename, processed)
+        print(f"Debug image saved: {debug_filename}")
+
+        return processed
+
+    def enhance_contrast_for_text(self, image):
+        img = image.copy()
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        ret, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        text_regions = []
+        for cnt in contours:
+            x, y, w, h = cv2.boundingRect(cnt)
+            if 5 < h < 50 and w > h:
+                text_regions.append((x, y, w, h))
 
-        # Apply adaptive thresholding
-        thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                       cv2.THRESH_BINARY, 11, 2)
+        text_mask = np.zeros_like(gray)
 
-        # Save debug image
-        cv2.imwrite(os.path.join(self.debug_dir, "1_standard_thresh.jpg"), thresh)
+        for x, y, w, h in text_regions:
+            roi = gray[y:y + h, x:x + w]
+            text_mask[y:y + h, x:x + w] = 255
 
-        return thresh
+        result = cv2.bitwise_and(img, img, mask=text_mask)
+        return result
 
-    def preprocess_image_enhanced(self, image):
-        """Enhanced preprocessing pipeline for difficult text"""
-        # Resize image (larger for better OCR)
-        img = cv2.resize(image, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+    def post_process_results(self, text):
+        if not text:
+            return text
 
-        # Convert to grayscale
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        text = text.strip()
+        text = re.sub(r'\s+', ' ', text)
+        text = text.upper()
+        text = re.sub(r'[^A-Z0-9 ]', '', text)
+        text = text.replace('I0', 'JD').replace('ID', 'JD')
+        text = text.replace('J0', 'JD').replace('JO', 'JD')
 
-        # Enhance contrast using CLAHE (Contrast Limited Adaptive Histogram Equalization)
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        enhanced = clahe.apply(gray)
+        jd_patterns = [
+            r'JD\s*[R|DZ]\d{6,}',
+            r'JD\s*\d{6,}',
+            r'[JI][D0O]\s*[R|DZ]?\d{6,}'
+        ]
 
-        # Apply Gaussian blur to reduce noise
-        blurred = cv2.GaussianBlur(enhanced, (5, 5), 0)
+        for pattern in jd_patterns:
+            match = re.search(pattern, text)
+            if match:
+                correct_code = match.group(0)
+                correct_code = correct_code.replace('I0', 'JD').replace('ID', 'JD')
+                correct_code = correct_code.replace('J0', 'JD').replace('JO', 'JD')
 
-        # Apply binary thresholding
-        _, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                if 'JD' in correct_code and not re.match(r'JD\s', correct_code):
+                    correct_code = re.sub(r'JD', 'JD ', correct_code)
 
-        # Apply morphological operations
-        kernel = np.ones((1, 1), np.uint8)
-        opening = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
+                return correct_code
 
-        # Save debug image
-        cv2.imwrite(os.path.join(self.debug_dir, "2_enhanced_thresh.jpg"), opening)
+        return text
 
-        return opening
+    def recognize_with_easyocr(self, image, preprocessing_method=None, angle=0):
+        if not EASYOCR_AVAILABLE:
+            return None, 0, f"easyocr_{preprocessing_method}_not_available"
 
-    def preprocess_image_inverse(self, image):
-        """Preprocessing for white text on dark background"""
-        # Resize image (larger for better OCR)
-        img = cv2.resize(image, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
-
-        # Convert to grayscale
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-        # Apply binary inverse thresholding
-        _, binary_inv = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY_INV)
-
-        # Save debug image
-        cv2.imwrite(os.path.join(self.debug_dir, "3_inverse_thresh.jpg"), binary_inv)
-
-        return binary_inv
-
-    def preprocess_image_adaptive(self, image):
-        """Adaptive thresholding approach"""
-        # Resize image
-        img = cv2.resize(image, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
-
-        # Convert to grayscale
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-        # Apply adaptive thresholding with larger block size
-        adaptive = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
-                                         cv2.THRESH_BINARY, 15, 8)
-
-        # Save debug image
-        cv2.imwrite(os.path.join(self.debug_dir, "4_adaptive_thresh.jpg"), adaptive)
-
-        return adaptive
-
-    def preprocess_for_printed_text(self, image):
-        """Specialized preprocessing for clear printed text"""
-        img = cv2.resize(image, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-        # Apply sharpening
-        kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
-        sharpened = cv2.filter2D(gray, -1, kernel)
-
-        # Denoise
-        denoised = cv2.fastNlMeansDenoising(sharpened, None, 10, 7, 21)
-
-        # Binary threshold with high value for clear text
-        _, binary = cv2.threshold(denoised, 160, 255, cv2.THRESH_BINARY)
-
-        # Save debug image
-        cv2.imwrite(os.path.join(self.debug_dir, "5_printed_text.jpg"), binary)
-
-        return binary
-
-    def recognize_with_easyocr(self, image, preprocessing_method=None):
-        """Recognize text using EasyOCR with optional preprocessing"""
         try:
-            # Apply preprocessing if specified
-            if preprocessing_method == "standard":
-                processed_image = self.preprocess_image_standard(image)
-            elif preprocessing_method == "enhanced":
-                processed_image = self.preprocess_image_enhanced(image)
-            elif preprocessing_method == "inverse":
-                processed_image = self.preprocess_image_inverse(image)
-            elif preprocessing_method == "adaptive":
-                processed_image = self.preprocess_image_adaptive(image)
-            elif preprocessing_method == "printed":
-                processed_image = self.preprocess_for_printed_text(image)
-            else:
-                # If no preprocessing method specified, use grayscale conversion
-                processed_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
-            # Run EasyOCR
+            processed_image = self.preprocess_image(image, preprocessing_method, angle)
             results = self.easyocr_reader.readtext(processed_image)
 
             if not results:
-                return None, 0, f"easyocr_{preprocessing_method}_no_text"
+                return None, 0, f"easyocr_{preprocessing_method}_notext"
 
-            texts = []
-            confidences = []
+            jd_found = False
+            jd_fragments = []
+            other_fragments = []
 
-            for (bbox, text, prob) in results:
-                if text.strip():
-                    texts.append(text)
-                    confidences.append(prob * 100)  # Convert to percentage
+            sorted_results = sorted(results, key=lambda x: (x[0][0][1], x[0][0][0]))
 
-            full_text = ' '.join(texts)
-            avg_confidence = sum(confidences) / len(confidences) if confidences else 0
+            for (bbox, text, prob) in sorted_results:
+                text = text.strip().upper()
 
-            # Debug: log the result
-            print(f"EasyOCR ({preprocessing_method}): '{full_text}' (Conf: {avg_confidence:.2f}%)")
+                if text == "JD" or text.startswith("JD "):
+                    jd_found = True
+                    jd_fragments.append((text, prob * 100, bbox))
+                elif jd_found:
+                    other_fragments.append((text, prob * 100, bbox))
+                elif text in ["ID", "J0", "I0", "JO"]:
+                    jd_found = True
+                    jd_fragments.append(("JD", prob * 100 * 0.9, bbox))
+                else:
+                    other_fragments.append((text, prob * 100, bbox))
 
-            return full_text, avg_confidence, f"easyocr_{preprocessing_method}"
+            if jd_found and jd_fragments:
+                combined_text = jd_fragments[0][0]
+                confidences = [jd_fragments[0][1]]
+
+                for text, conf, _ in other_fragments:
+                    if combined_text.endswith(" "):
+                        combined_text += text
+                    else:
+                        combined_text += " " + text
+                    confidences.append(conf)
+
+                avg_confidence = sum(confidences) / len(confidences) if confidences else 0
+                return combined_text, avg_confidence, f"easyocr_{preprocessing_method}"
+
+            return None, 0, f"easyocr_{preprocessing_method}_no_jd"
 
         except Exception as e:
-            print(f"Error with EasyOCR ({preprocessing_method}): {e}")
+            print(f"Error with EasyOCR ({preprocessing_method}): {str(e)}")
             return None, 0, f"easyocr_{preprocessing_method}_error"
 
-    def recognize_text(self, image):
-        """Recognize text using EasyOCR with multiple preprocessing strategies"""
-        results = []
+    def rotate_image(self, image, angle):
+        height, width = image.shape[:2]
+        center = (width / 2, height / 2)
 
-        # Try different preprocessing methods
-        preprocessing_methods = [
-            None,  # No preprocessing
-            "standard",
-            "enhanced",
-            "inverse",
-            "adaptive",
-            "printed"
-        ]
+        rotation_matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
+
+        rotated = cv2.warpAffine(image, rotation_matrix, (width, height),
+                               flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+
+        return rotated
+
+    def try_orientation(self, image, angle):
+        print(f"Trying orientation: {angle}°")
+
+        if angle == 0:
+            rotated_image = image
+        else:
+            rotated_image = self.rotate_image(image, angle)
+
+        preprocessing_methods = [None, "standard"]
+        all_results = []
 
         for method in preprocessing_methods:
-            result = self.recognize_with_easyocr(image, method)
-            if result[0]:  # If text was detected
-                results.append(result)
+            method_name = method if method else "default"
+            result = self.recognize_with_easyocr(rotated_image, method, angle)
 
-        if not results:
+            if result[0]:
+                print(f"✓ Detected at {angle}°: {result[0]} ({result[1]:.1f}%)")
+                all_results.append(result)
+
+        if all_results:
+            best_result = max(all_results, key=lambda x: x[1])
+            return best_result, angle
+
+        return (None, 0, f"no_text_at_{angle}"), angle
+
+    def recognize_text(self, image):
+        total_start_time = time.time()
+
+        angles = [0, 45, 90, 135, 180, 235, 270]
+        orientation_results = []
+
+        GOOD_CONFIDENCE_THRESHOLD = 70
+
+        for angle in angles:
+            result, angle = self.try_orientation(image, angle)
+            if result[0]:
+                orientation_results.append((result, angle))
+                print(f"Text found at {angle}° with confidence {result[1]:.1f}%")
+
+                if result[1] > GOOD_CONFIDENCE_THRESHOLD:
+                    print(f"Found good orientation at {angle}° - skipping remaining angles")
+                    break
+            else:
+                print(f"No text detected at {angle}°")
+
+        best_angle = 0
+        if orientation_results:
+            best_orientation = max(orientation_results, key=lambda x: x[0][1])
+            best_result, best_angle = best_orientation
+
+            print(f"Best orientation detected: {best_angle}°")
+
+            if best_result[1] > 85:
+                processed_text = self.post_process_results(best_result[0])
+                print(f"Total processing time: {time.time() - total_start_time:.3f}s")
+                return processed_text, best_result[1], f"{best_result[2]}_{best_angle}deg"
+
+            if best_angle != 0:
+                image = self.rotate_image(image, best_angle)
+
+        all_results = []
+        preprocessing_methods = [None, "standard", "jd_format", "metal_curved"]
+
+        print("Processing with original image...")
+        for method in preprocessing_methods:
+            method_name = method if method else "default"
+            print(f"Trying preprocessing method: {method_name}")
+
+            result = self.recognize_with_easyocr(image, method, best_angle)
+            if result[0]:
+                print(f"✓ {method_name}: {result[0]} ({result[1]:.1f}%)")
+                all_results.append(result)
+
+        if not all_results or max((result[1] for result in all_results), default=0) < 70:
+            print("Trying enhanced contrast image...")
+            enhanced_image = self.enhance_contrast_for_text(image)
+
+            debug_filename = f"{self.debug_dir}/debug_{best_angle}deg_enhanced_contrast.jpg"
+            cv2.imwrite(debug_filename, enhanced_image)
+            print(f"Debug image saved: {debug_filename}")
+            for method in preprocessing_methods[:4]:
+                method_name = method if method else "default"
+                print(f"Trying preprocessing method: {method_name} (enhanced)")
+
+
+                result = self.recognize_with_easyocr(enhanced_image, method, best_angle)
+                if result[0]:
+                    print(f"✓ {method_name} (enhanced): {result[0]} ({result[1]:.1f}%)")
+                    all_results.append(result)
+
+        print(f"Total valid results: {len(all_results)}")
+        print(f"Processing time: {time.time() - total_start_time:.3f}s")
+
+        if not all_results:
             return "No text detected", 0, "no_valid_results"
 
-        # If only one valid result, return it
-        if len(results) == 1:
-            return results[0]
+        best_result = max(all_results, key=lambda x: x[1])
+        processed_text = self.post_process_results(best_result[0])
 
-        # Strategy 1: Select result with highest confidence
-        best_by_confidence = max(results, key=lambda x: x[1])
-
-        # Strategy 2: Check if multiple methods detected similar text
-        texts = [r[0] for r in results]
-        text_matches = {}
-
-        for i, text1 in enumerate(texts):
-            for j, text2 in enumerate(texts):
-                if i < j:
-                    similarity = difflib.SequenceMatcher(None, text1, text2).ratio()
-                    if similarity > 0.7:  # Texts are similar
-                        # Choose the one with higher confidence
-                        if results[i][1] > results[j][1]:
-                            text_matches[text1] = text_matches.get(text1, 0) + 1
-                        else:
-                            text_matches[text2] = text_matches.get(text2, 0) + 1
-
-        # If we found similar texts across preprocessing methods
-        if text_matches:
-            most_common_text = max(text_matches.items(), key=lambda x: x[1])[0]
-            # Find the result with this text
-            for result in results:
-                if result[0] == most_common_text:
-                    return result
-
-        # Default to highest confidence
-        return best_by_confidence
+        return processed_text, best_result[1], best_result[2]
 
     def save_result(self, text, confidence, method, image_path=None, output_dir="results"):
-        """Save OCR result to a file"""
         os.makedirs(output_dir, exist_ok=True)
         timestamp = os.path.basename(image_path).split('.')[0] if image_path else str(int(time.time()))
 
